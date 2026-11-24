@@ -1002,8 +1002,8 @@ pub unsafe extern "C" fn tondo_rt_str_test(s: *const Str, other: *const Str, tes
 /// The scalar position of the first occurrence of `needle`, or -1.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_find(s: *const Str, needle: *const Str) -> i64 {
-    let (text, needle) = unsafe { (str_text(&s), str_bytes(&needle)) };
-    find(text.as_bytes(), needle).map_or(-1, |offset| text[..offset].chars().count() as i64)
+    let (text, needle) = unsafe { (str_bytes(&s), str_bytes(&needle)) };
+    find(text, needle).map_or(-1, |offset| scalars(&text[..offset]) as i64)
 }
 
 /// Where `needle` first is in `haystack`: at each place its first byte is,
@@ -1034,13 +1034,35 @@ pub unsafe extern "C" fn tondo_rt_str_replace(
     REPLACING.with_borrow_mut(|out| {
         out.clear();
         let mut last = 0;
-        for (at, _) in s.match_indices(old) {
-            out.push_str(&s[last..at]);
-            out.push_str(new);
-            last = at + old.len();
+        match old.as_bytes() {
+            [] => {
+                for (at, _) in s.match_indices(old) {
+                    out.push_str(&s[last..at]);
+                    out.push_str(new);
+                    last = at;
+                }
+            }
+            [byte] => {
+                for at in memchr::memchr_iter(*byte, s.as_bytes()) {
+                    out.push_str(&s[last..at]);
+                    out.push_str(new);
+                    last = at + 1;
+                }
+            }
+            needle => {
+                for at in memchr::memmem::find_iter(s.as_bytes(), needle) {
+                    out.push_str(&s[last..at]);
+                    out.push_str(new);
+                    last = at + needle.len();
+                }
+            }
         }
-        out.push_str(&s[last..]);
-        let made = str_in(region, out.as_bytes());
+        let made = if last == 0 && !old.is_empty() {
+            str_in(region, s.as_bytes())
+        } else {
+            out.push_str(&s[last..]);
+            str_in(region, out.as_bytes())
+        };
         if out.capacity() > REPLACING_KEPT {
             *out = String::new();
         }

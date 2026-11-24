@@ -175,11 +175,11 @@ pub fn parse(text: String): Url ! UrlError {
                 }
             }
         } else {
+            // Unreserved, sub-delimiters and `%`.
+            let hostLo: UInt64 = PlainLo | (1 << 37)
             for (index, character) in hostPort.chars().enumerate() {
-                if character.code() < 128 and
-                    not (asciiLetter(character) or
-                        character.isDigit() or
-                        "-._~!$&'()*+,;=%".contains("{character}")) {
+                let code = character.code()
+                if code < 128 and not allowedByte(UInt64.wrapping(code), hostLo, PlainHi) {
                     fail UrlError {
                         message: "`{character}` cannot be in a host, which has letters, digits and `-._~!$&'()*+,;=`: write it as `%XX`"
                         offset: hostStart + index
@@ -200,13 +200,19 @@ pub fn parse(text: String): Url ! UrlError {
 /// Whether `text` is a scheme: a letter, then letters, digits, `+`, `-`
 /// and `.`.
 fn isScheme(text: String): Bool {
-    for (index, character) in text.chars().enumerate() {
-        if not (asciiLetter(character) or
-            (index > 0 and (character.isDigit() or "+-.".contains("{character}")))) {
+    let length = text.byteLength()
+    if length == 0 {
+        return false
+    }
+    for index in 0..length {
+        let b = Int(text.byteAt(index))
+        let letter = (b >= 0x61 and b <= 0x7A) or (b >= 0x41 and b <= 0x5A)
+        let tail = index > 0 and ((b >= 0x30 and b <= 0x39) or b == 0x2B or b == 0x2D or b == 0x2E)
+        if not (letter or tail) {
             return false
         }
     }
-    not text.isEmpty()
+    true
 }
 
 /// Whether it is an IPv6 address, with a zone after `%25` (RFC 6874).
@@ -215,8 +221,14 @@ fn ipv6(text: String): Bool {
     address.contains(":") and not netNative.canonicalIp(address).isEmpty()
 }
 
-fn asciiLetter(character: Char): Bool {
-    (character >= 'a' and character <= 'z') or (character >= 'A' and character <= 'Z')
+/// RFC 3986 unreserved characters and sub-delimiters:
+/// `A-Z`, `a-z`, `0-9`, and `-._~!$&'()*+,;=`.
+const PlainLo: UInt64 = 0x2BFF_7FD2_0000_0000
+
+const PlainHi: UInt64 = 0x47FF_FFFE_87FF_FFFE
+
+fn allowedByte(b: UInt64, lo: UInt64, hi: UInt64): Bool {
+    if b < 64 { (lo >> b) & 1 != 0 } else if b < 128 { (hi >> (b - 64)) & 1 != 0 } else { false }
 }
 
 /// A part with its `%XX` read, which must be UTF-8; `at` is where it
@@ -429,22 +441,51 @@ impl __reflect.Reflect for Url {
     }
 }
 
+/// Uppercase hex digit for a nibble `0..16`.
+fn hexDigit(nibble: Int): Byte {
+    "0123456789ABCDEF".byteAt(nibble)
+}
+
 /// The text with each byte but the unreserved characters, the
 /// sub-delimiters and `kept` written as `%XX`.
 fn encoded(text: String, kept: String): String {
-    var out: Array[String] = []
-    for character in text.chars() {
-        let plain =
-            asciiLetter(character) or
-                character.isDigit() or
-                "-._~!$&'()*+,;=".contains("{character}")
-        if plain or kept.contains("{character}") {
-            out.push("{character}")
-        } else {
-            out.push(__encoding.urlEncode("{character}"))
+    var lo = PlainLo
+    var hi = PlainHi
+    for index in 0..kept.byteLength() {
+        let b = UInt64(kept.byteAt(index))
+        if b < 64 {
+            lo = lo | (1 << b)
+        } else if b < 128 {
+            hi = hi | (1 << (b - 64))
         }
     }
-    out.join("")
+    let length = text.byteLength()
+    var first = -1
+    for index in 0..length {
+        if not allowedByte(UInt64(text.byteAt(index)), lo, hi) {
+            first = index
+            break
+        }
+    }
+    if first < 0 {
+        return text
+    }
+    var out: Array[Byte] = []
+    for index in 0..first {
+        out.push(text.byteAt(index))
+    }
+    for index in first..length {
+        let raw = text.byteAt(index)
+        let b = Int(raw)
+        if allowedByte(UInt64(raw), lo, hi) {
+            out.push(raw)
+        } else {
+            out.push(0x25)
+            out.push(hexDigit(b >> 4))
+            out.push(hexDigit(b & 15))
+        }
+    }
+    String.fromBytes(out) ?? text
 }
 
 /// An error, which reflection shows as its message, so a method that fails

@@ -23,6 +23,12 @@ pub struct MapObject {
     table: Room<usize>,
 }
 
+// Offsets relied upon by `codegen.rs` (`MAP_ENTRIES`, `MAP_LEN`).
+const _: () = {
+    assert!(std::mem::offset_of!(MapObject, entries) == 24);
+    assert!(std::mem::offset_of!(MapObject, hashes) + std::mem::offset_of!(Room<u64>, len) == 56);
+};
+
 // `EMPTY` is shared and never written; every other map is one task's.
 unsafe impl Sync for MapObject {}
 

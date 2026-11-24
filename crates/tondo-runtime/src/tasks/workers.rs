@@ -291,9 +291,14 @@ pub(super) fn schedule(task: *mut Task) {
 /// queue, which idle workers take from; others in the queue every worker
 /// takes from.
 pub(super) fn enqueue(task: *mut Task) {
-    if !current().is_null()
+    enqueue_from(task, !current().is_null(), own_next());
+}
+
+/// `enqueue` with the caller's current task and local queue already read.
+pub(super) fn enqueue_from(task: *mut Task, has_current: bool, own_next: Option<&'static Next>) {
+    if has_current
         && exploring().is_none()
-        && let Some(own) = own_next()
+        && let Some(own) = own_next
     {
         let mut tasks = own.tasks();
         tasks.0.push_back(task);

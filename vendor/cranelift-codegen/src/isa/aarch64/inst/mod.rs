@@ -1079,6 +1079,13 @@ impl MachInst for Inst {
         }
     }
 
+    fn is_real_call(&self) -> bool {
+        match self {
+            Inst::Call { info } => !info.patchable,
+            _ => self.call_type() != CallType::None,
+        }
+    }
+
     fn is_term(&self) -> MachTerminator {
         match self {
             &Inst::Rets { .. } => MachTerminator::Ret,

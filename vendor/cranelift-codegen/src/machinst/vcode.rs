@@ -764,17 +764,169 @@ impl<I: VCodeInst> VCode<I> {
         buffer.register_constants(&self.constants);
 
         // Construct the final order we emit code in: cold blocks at the end.
-        let mut final_order: SmallVec<[BlockIndex; 16]> = smallvec![];
+        // Tondo: in optimized builds, sink self-contained calling diamond/guard
+        // arms after the hot path (before cold blocks) so fast non-calling arms
+        // fall straight through into their merge block.
+        let mut hot_blocks: SmallVec<[BlockIndex; 16]> = smallvec![];
         let mut cold_blocks: SmallVec<[BlockIndex; 16]> = smallvec![];
         for block in 0..self.num_blocks() {
             let block = BlockIndex::new(block);
             if self.block_order.is_cold(block) {
                 cold_blocks.push(block);
             } else {
-                final_order.push(block);
+                hot_blocks.push(block);
             }
         }
+        let mut final_order: SmallVec<[BlockIndex; 16]> = smallvec![];
+        let mut sunk: SmallVec<[bool; 32]> = smallvec![false; self.num_blocks()];
+        let mut sunk_any = false;
+        if flags.opt_level() != settings::OptLevel::None && hot_blocks.len() > 2 {
+            let mut hot_pos: SmallVec<[Option<usize>; 32]> = smallvec![None; self.num_blocks()];
+            for (pos, &b) in hot_blocks.iter().enumerate() {
+                hot_pos[b.index()] = Some(pos);
+            }
+            let mut has_call: SmallVec<[bool; 32]> = smallvec![false; self.num_blocks()];
+            for &b in &hot_blocks {
+                let range = self.block_ranges.get(b.index());
+                has_call[b.index()] = (range.start..range.end).any(|i| self.insts[i].is_real_call());
+            }
+            for i in 0..hot_blocks.len() {
+                let b = hot_blocks[i];
+                if sunk[b.index()] {
+                    continue;
+                }
+                let mut succs: SmallVec<[BlockIndex; 4]> = smallvec![];
+                for &s in self.block_succs(b) {
+                    if !self.block_order.is_cold(s) && !succs.contains(&s) {
+                        succs.push(s);
+                    }
+                }
+                if succs.len() != 2 {
+                    continue;
+                }
+                let (Some(p0), Some(p1)) = (hot_pos[succs[0].index()], hot_pos[succs[1].index()]) else {
+                    continue;
+                };
+                let (s0_pos, s1_pos) = if p0 < p1 { (p0, p1) } else { (p1, p0) };
+                if s0_pos != i + 1 || s1_pos <= s0_pos {
+                    continue;
+                }
+                let s1 = hot_blocks[s1_pos];
+                if has_call[s1.index()] {
+                    continue;
+                }
+                let region = &hot_blocks[s0_pos..s1_pos];
+                let mut region_has_call = false;
+                let mut region_ok = true;
+                for &x in region {
+                    if sunk[x.index()]
+                        || x == self.entry
+                        || self.block_order.is_indirect_branch_target(x)
+                    {
+                        region_ok = false;
+                        break;
+                    }
+                    if has_call[x.index()] {
+                        region_has_call = true;
+                    }
+                    for &p in self.block_preds(x) {
+                        let Some(pp) = hot_pos[p.index()] else {
+                            region_ok = false;
+                            break;
+                        };
+                        if pp != i && !(s0_pos..s1_pos).contains(&pp) {
+                            region_ok = false;
+                            break;
+                        }
+                    }
+                    if !region_ok {
+                        break;
+                    }
+                }
+                if !region_ok || !region_has_call {
+                    continue;
+                }
+                let s1_range = self.block_ranges.get(s1.index());
+                let s1_returns = s1_range.start < s1_range.end
+                    && matches!(
+                        self.insts[s1_range.end - 1].is_term(),
+                        MachTerminator::Ret | MachTerminator::RetCall
+                    );
+                let mut merges: SmallVec<[BlockIndex; 8]> = smallvec![s1];
+                if !s1_returns {
+                    let mut cur = s1;
+                    for _ in 0..8 {
+                        let cur_pos = hot_pos[cur.index()].unwrap();
+                        let mut next_forward = None;
+                        let mut count = 0;
+                        for &m in self.block_succs(cur) {
+                            if let Some(mp) = hot_pos[m.index()] {
+                                if mp > cur_pos {
+                                    if !merges.contains(&m) {
+                                        merges.push(m);
+                                    }
+                                    next_forward = Some(m);
+                                    count += 1;
+                                }
+                            }
+                        }
+                        if count == 1 {
+                            let next = next_forward.unwrap();
+                            if !has_call[next.index()] {
+                                cur = next;
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+                }
+                let rejoins = region.iter().any(|&x| {
+                    self.block_succs(x).iter().any(|succ| merges.contains(succ))
+                });
+                if rejoins {
+                    sunk_any = true;
+                    for &x in region {
+                        sunk[x.index()] = true;
+                    }
+                }
+            }
+            for &b in &hot_blocks {
+                if !sunk[b.index()] {
+                    final_order.push(b);
+                }
+            }
+            for &b in &hot_blocks {
+                if sunk[b.index()] {
+                    final_order.push(b);
+                }
+            }
+        } else {
+            final_order.extend(hot_blocks);
+        }
         final_order.extend(cold_blocks.clone());
+
+        // Tondo: identify hot loop headers (non-cold, non-sunk blocks with a
+        // non-cold, non-sunk back-edge in `final_order`) so we align them to
+        // 32 bytes (matching x64's DSB/fetch window and function alignment).
+        let mut loop_header: SmallVec<[bool; 32]> = smallvec![false; self.num_blocks()];
+        if flags.opt_level() != settings::OptLevel::None && flags.bb_padding_log2_minus_one() == 0 {
+            let mut final_pos: SmallVec<[usize; 32]> = smallvec![0; self.num_blocks()];
+            for (pos, &b) in final_order.iter().enumerate() {
+                final_pos[b.index()] = pos;
+            }
+            for (pos, &b) in final_order.iter().enumerate() {
+                if self.block_order.is_cold(b) || sunk[b.index()] {
+                    continue;
+                }
+                if self
+                    .block_preds(b)
+                    .iter()
+                    .any(|&p| !self.block_order.is_cold(p) && !sunk[p.index()] && final_pos[p.index()] >= pos)
+                {
+                    loop_header[b.index()] = true;
+                }
+            }
+        }
 
         // Compute/save info we need for the prologue: clobbers and
         // number of spillslots.
@@ -796,12 +948,16 @@ impl<I: VCodeInst> VCode<I> {
         let mut cur_srcloc = None;
         let mut last_offset = None;
         let mut inst_offsets = vec![];
+        let mut block_end_offsets = vec![];
         let mut state = I::State::new(&self.abi, core::mem::take(ctrl_plane));
 
         let mut disasm = String::new();
 
         if !self.debug_value_labels.is_empty() {
             inst_offsets.resize(self.insts.len(), NO_INST_OFFSET);
+            if sunk_any {
+                block_end_offsets.resize(self.num_blocks(), 0);
+            }
         }
 
         // Count edits per block ahead of time; this is needed for
@@ -881,6 +1037,12 @@ impl<I: VCodeInst> VCode<I> {
             // Now emit the regular block body.
 
             buffer.bind_label(MachLabel::from_block(block), state.ctrl_plane_mut());
+            if loop_header[block.index()] {
+                buffer.align_bound_label(MachLabel::from_block(block), 32, |buf, left| {
+                    let nop = I::gen_nop(left);
+                    nop.emit(buf, &self.emit_info, &mut Default::default());
+                });
+            }
 
             if want_disasm {
                 writeln!(&mut disasm, "block{}:", block.index()).unwrap();
@@ -1114,6 +1276,8 @@ impl<I: VCodeInst> VCode<I> {
             }
             if cold_here {
                 cold_blocks.push((block, cold_items, buffer.cur_offset()));
+            } else if sunk_any && !self.debug_value_labels.is_empty() && !self.block_order.is_cold(block) {
+                block_end_offsets[block.index()] = buffer.cur_offset();
             }
 
             if cur_srcloc.is_some() {
@@ -1186,9 +1350,42 @@ impl<I: VCodeInst> VCode<I> {
             }
         }
 
-        self.monotonize_inst_offsets(&mut inst_offsets[..], func_body_len);
-        let mut value_labels_ranges =
-            self.compute_value_labels_ranges(regalloc, &inst_offsets[..], cold_start.unwrap_or(func_body_len));
+        let non_cold_end = cold_start.unwrap_or(func_body_len);
+        let mut value_labels_ranges = if sunk_any && !self.debug_value_labels.is_empty() {
+            // Tondo: when hot blocks were reordered out of `BlockIndex` order,
+            // monotonize offsets in emission order and split each regalloc
+            // debug range across the non-cold blocks it spans.
+            let mut next_offset = non_cold_end;
+            for &block in final_order.iter().rev() {
+                if self.block_order.is_cold(block) {
+                    continue;
+                }
+                if block_end_offsets[block.index()] > next_offset {
+                    block_end_offsets[block.index()] = next_offset;
+                }
+                let range = self.block_ranges.get(block.index());
+                for i in (range.start..range.end).rev() {
+                    let off = inst_offsets[i];
+                    if off == NO_INST_OFFSET {
+                        continue;
+                    }
+                    if off > next_offset {
+                        inst_offsets[i] = next_offset;
+                    } else {
+                        next_offset = off;
+                    }
+                }
+            }
+            self.compute_value_labels_ranges_reordered(
+                regalloc,
+                &inst_offsets[..],
+                &block_end_offsets[..],
+                &final_order[..],
+            )
+        } else {
+            self.monotonize_inst_offsets(&mut inst_offsets[..], func_body_len);
+            self.compute_value_labels_ranges(regalloc, &inst_offsets[..], non_cold_end)
+        };
         self.extend_into_cold_blocks(regalloc, &cold_blocks, &mut value_labels_ranges);
 
         // Store metadata about frame layout in the MachBuffer.
@@ -1314,6 +1511,80 @@ impl<I: VCodeInst> VCode<I> {
             });
         }
 
+        value_labels_ranges
+    }
+
+    /// Tondo: translates `regalloc.debug_locations` into machine-code ranges
+    /// when non-cold blocks were reordered during emission.
+    fn compute_value_labels_ranges_reordered(
+        &self,
+        regalloc: &regalloc2::Output,
+        inst_offsets: &[CodeOffset],
+        block_end_offsets: &[CodeOffset],
+        final_order: &[BlockIndex],
+    ) -> ValueLabelsRanges {
+        let mut value_labels_ranges: ValueLabelsRanges = HashMap::new();
+        let emitted: Vec<(usize, usize, CodeOffset)> = final_order
+            .iter()
+            .filter(|&&b| !self.block_order.is_cold(b))
+            .map(|&b| {
+                let range = self.block_ranges.get(b.index());
+                (range.start, range.end, block_end_offsets[b.index()])
+            })
+            .collect();
+        let prog_point_to_inst = |prog_point: ProgPoint| {
+            let mut inst = prog_point.inst();
+            if prog_point.pos() == InstPosition::After {
+                inst = inst.next();
+            }
+            inst.index()
+        };
+        for &(label, from, to, alloc) in &regalloc.debug_locations {
+            let from_inst = prog_point_to_inst(from);
+            let to_inst = prog_point_to_inst(to);
+            if from_inst >= to_inst {
+                continue;
+            }
+            let Some(loc) = self.label_location(alloc) else { continue };
+            let ranges = value_labels_ranges.entry(ValueLabel::from_u32(label)).or_default();
+            for &(b_start, b_end, b_end_off) in &emitted {
+                if to_inst <= b_start || from_inst >= b_end {
+                    continue;
+                }
+                let lo = from_inst.max(b_start);
+                let hi = to_inst.min(b_end);
+                let Some(start_off) = inst_offsets[lo..hi].iter().copied().find(|&o| o != NO_INST_OFFSET) else {
+                    continue;
+                };
+                let end_off = inst_offsets[hi..b_end]
+                    .iter()
+                    .copied()
+                    .find(|&o| o != NO_INST_OFFSET)
+                    .unwrap_or(b_end_off);
+                if start_off >= end_off {
+                    continue;
+                }
+                ranges.push(ValueLocRange {
+                    loc,
+                    start: start_off,
+                    end: end_off,
+                });
+            }
+        }
+        for ranges in value_labels_ranges.values_mut() {
+            ranges.sort_by_key(|r| (r.start, r.end));
+            let mut merged: Vec<ValueLocRange> = Vec::with_capacity(ranges.len());
+            for range in ranges.drain(..) {
+                if let Some(last) = merged.last_mut() {
+                    if last.loc == range.loc && last.end == range.start {
+                        last.end = range.end;
+                        continue;
+                    }
+                }
+                merged.push(range);
+            }
+            *ranges = merged;
+        }
         value_labels_ranges
     }
 

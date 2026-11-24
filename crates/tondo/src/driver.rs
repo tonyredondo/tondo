@@ -1629,6 +1629,7 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, s
     crate::captured::captured(bodies, types);
     after("captured", bodies, types, sources);
     crate::inline::inline(bodies);
+    lower::drop_dead_cancellations(bodies);
     after("inline", bodies, types, sources);
     crate::elide::elide(bodies, types);
     after("elide", bodies, types, sources);
@@ -1655,6 +1656,7 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, s
     after("prove", bodies, types, sources);
     crate::split::split(bodies, types, sources);
     crate::borrowed::borrowed(bodies, types);
+    crate::elide::drop_dead_pure(bodies);
     after("split again", bodies, types, sources);
     crate::stack::stack(bodies, types);
     after("stack", bodies, types, sources);

@@ -137,7 +137,7 @@ static PINNED_WAKE: Condvar = Condvar::new();
 pub(crate) struct Task {
     /// `TASK_MARK` while the task is alive: what finds it in a core, which
     /// knows the fields up to `blocked` (toolchain 7.5).
-    mark: u64,
+    mark: AtomicU64,
     /// The stack pointer saved when the task is not running.
     sp: *mut u8,
     /// Its number in a trace, from 1 for the main task.
@@ -584,8 +584,22 @@ pub(crate) fn set_own_labels(set: u32) {
 
 /// The bounds of the running task's stack, above its guard: the thread's
 /// own for a call of C's that runs there.
+/// Records the current OS thread's stack bounds once so sampling and stack
+/// walks outside a Tondo task (e.g. `turn_host` or HTTP runtime threads) can
+/// unwind the thread stack without allocating during sampling.
+pub(crate) fn find_thread_stack() {
+    kept().find_stack();
+}
+
 pub(crate) fn stack_bounds() -> Option<(usize, usize)> {
-    let task = unsafe { current().as_ref()? };
+    stack_bounds_of(current())
+}
+
+#[inline]
+pub(super) fn stack_bounds_of(task: *mut Task) -> Option<(usize, usize)> {
+    let Some(task) = (unsafe { task.as_ref() }) else {
+        return thread_stack();
+    };
     if task.native {
         return thread_stack();
     }
@@ -749,26 +763,26 @@ pub(super) static TASK_IDS: AtomicU64 = AtomicU64::new(1);
 
 /// A new task that `parent` starts, or none, in `place` or in a block of
 /// its own when that is null; one `native` runs on its thread's stack
-/// (`Task::native`), its number and its shard its thread's, so that calls of
-/// C on several threads share nothing. Inlined, what a task without a parent
-/// inherits folds away.
+/// (`Task::native`), tracked via `Kept::calling` rather than `TASKS` so
+/// calls of C on several threads share nothing. Inlined, what a task
+/// without a parent inherits folds away.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn new_task(
     parent: *mut Task,
+    id: u64,
     stack: Option<Stack>,
     body: *mut u8,
     code: *const u8,
     kind: ResultKind,
     join: *mut JoinObject,
     place: *mut Task,
-    native: Option<(u64, u8)>,
+    native: Option<u8>,
 ) -> *mut Task {
     super::diagnostics::TASKS_SPAWNED.add(1);
     let sp = stack.as_ref().map_or(std::ptr::null_mut(), |stack| unsafe { initial_stack(stack.top()) });
     // `spawn detached` said so just before (11.11).
     let detached = unsafe { parent.as_mut() }.is_some_and(|parent| std::mem::take(&mut parent.detaching));
-    let id = native.map_or_else(|| TASK_IDS.fetch_add(1, Ordering::Relaxed), |(id, _)| id);
     let name = match unsafe { parent.as_mut() }.filter(|_| tools::listens(tools::RACES) && noting()) {
         Some(parent) => {
             parent.started += 1;
@@ -785,18 +799,18 @@ fn new_task(
     }
     // What a task inherits from the one that starts it; one that a thread of
     // C starts inherits nothing.
-    let (labels, own_labels, context, inherited, owner) = match parent.is_null() {
-        true => (0, 0, super::contexts::Held::NONE, u64::MAX, None),
-        false => (
-            labels(),
-            own_labels(),
-            super::contexts::inherited(),
-            if detached { u64::MAX } else { super::contexts::deadline_nanos() },
-            if detached { None } else { super::panics::owner_of_new() },
+    let (labels, own_labels, context, inherited, owner) = match unsafe { parent.as_mut() } {
+        None => (0, 0, super::contexts::Held::NONE, u64::MAX, None),
+        Some(parent) => (
+            parent.labels.load(Ordering::Relaxed),
+            parent.own_labels.load(Ordering::Relaxed),
+            super::contexts::inherited_from(parent),
+            if detached { u64::MAX } else { super::contexts::deadline_nanos_of(parent) },
+            if detached { None } else { super::panics::owner_of_new_from(parent) },
         ),
     };
     let task = Task {
-        mark: TASK_MARK,
+        mark: AtomicU64::new(TASK_MARK),
         sp,
         id,
         slot: 0,
@@ -862,8 +876,14 @@ fn new_task(
             place
         },
     };
-    unsafe { (*task).shard = native.map_or(((task as usize >> 6) % SHARDS) as u8, |(_, shard)| shard) };
-    register(task);
+    // Spread 640-byte `Spawned` blocks across all 16 shards (an address shift
+    // alone only hit even shards because 640 = 10 * 64).
+    unsafe {
+        (*task).shard = native.unwrap_or_else(|| ((task as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 60) as u8);
+    }
+    if native.is_none() {
+        register(task);
+    }
     super::clock::woke(task);
     task
 }
@@ -878,6 +898,7 @@ pub fn run_main(code: unsafe extern "C" fn() -> i32) -> i32 {
     exploring();
     let task = new_task(
         std::ptr::null_mut(),
+        TASK_IDS.fetch_add(1, Ordering::Relaxed),
         Some(Stack::new(MAIN_STACK)),
         std::ptr::null_mut(),
         code as *const u8,

@@ -18,6 +18,7 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ),
     ("testing.rs", "(name)", "the environment a test changed, given back before the next"),
     ("client.rs", "(name)", "the proxies, by curl's names, read as a client is made, which a program may set first"),
+    ("env.rs", "\"PATH\"", "the host's PATH, read without copying the rest of the environment when unchanged"),
 ];
 
 fn runtime() -> std::path::PathBuf {

@@ -125,12 +125,22 @@ pub(super) fn runner_ended(kept: &Kept) {
 
 /// From now on this thread runs Tondo code, once no collection runs.
 pub(crate) fn enter_tondo() {
-    let runner = running_here();
+    enter_tondo_with(running_here());
+}
+
+/// `enter_tondo` for this thread's runner already read.
+#[inline]
+pub(super) fn enter_tondo_with(runner: &'static Runner) {
+    runner.running.store(true, Ordering::SeqCst);
+    if STOPPING.load(Ordering::SeqCst) {
+        enter_tondo_slow(runner);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn enter_tondo_slow(runner: &'static Runner) {
     loop {
-        runner.running.store(true, Ordering::SeqCst);
-        if !STOPPING.load(Ordering::SeqCst) {
-            return;
-        }
         // The thread that stopped the world runs on, and stays out of what
         // this stop and the next wait for.
         if STOPPED_BY.load(Ordering::SeqCst) == this_thread() {
@@ -146,11 +156,23 @@ pub(crate) fn enter_tondo() {
         }
         drop(resumed);
         runner.task.store(std::ptr::null_mut(), Ordering::SeqCst);
+        runner.running.store(true, Ordering::SeqCst);
+        if !STOPPING.load(Ordering::SeqCst) {
+            return;
+        }
     }
 }
 
 pub(super) fn leave_tondo() {
-    running_here().running.store(false, Ordering::SeqCst);
+    leave_tondo_with(running_here());
+}
+
+/// `leave_tondo` for this thread's runner already read. `Release` pairs with
+/// `stop_world`'s `SeqCst` load so every heap write before this is visible;
+/// the entry store remains `SeqCst` for Dekker ordering with `STOPPING`.
+#[inline]
+pub(super) fn leave_tondo_with(runner: &'static Runner) {
+    runner.running.store(false, Ordering::Release);
 }
 
 /// Takes this thread out of Tondo code where it is, as when it waits for

@@ -45,31 +45,27 @@ pub type Reply = {
     priv payload: Payload
 }
 
+const TextHeaders: Array[String] = ["content-type", "text/plain; charset=utf-8"]
+
+const HtmlHeaders: Array[String] = ["content-type", "text/html; charset=utf-8"]
+
+const JsonHeaders: Array[String] = ["content-type", "application/json"]
+
+const EventsHeaders: Array[String] = ["cache-control", "no-cache"]
+
 /// A reply of text, as `text/plain; charset=utf-8`.
 pub fn Reply.text(text: String, status: Int = 200): Reply {
-    Reply {
-        code: status
-        headerList: ["content-type", "text/plain; charset=utf-8"]
-        payload: Payload.Text(text)
-    }
+    Reply { code: status, headerList: TextHeaders, payload: Payload.Text(text) }
 }
 
 /// A reply of HTML, as `text/html; charset=utf-8`.
 pub fn Reply.html(html: String, status: Int = 200): Reply {
-    Reply {
-        code: status
-        headerList: ["content-type", "text/html; charset=utf-8"]
-        payload: Payload.Text(html)
-    }
+    Reply { code: status, headerList: HtmlHeaders, payload: Payload.Text(html) }
 }
 
 /// The value as JSON (`std.json`).
 pub fn Reply.json[T: __serialization.Encode](value: T, status: Int = 200): Reply {
-    Reply {
-        code: status
-        headerList: ["content-type", "application/json"]
-        payload: Payload.Text(__json.encode(value))
-    }
+    Reply { code: status, headerList: JsonHeaders, payload: Payload.Text(__json.encode(value)) }
 }
 
 /// A reply of bytes, with their content type.
@@ -151,7 +147,7 @@ pub fn Reply.file(path: String, download: String? = none): Reply {
 
 /// Server-Sent Events: each event the channel receives, until it closes.
 pub fn Reply.events(events: Receiver[Event]): Reply {
-    Reply { code: 200, headerList: ["cache-control", "no-cache"], payload: Payload.Events(events) }
+    Reply { code: 200, headerList: EventsHeaders, payload: Payload.Events(events) }
 }
 
 /// A reply that sends the client to `url`: `302 Found` unless another

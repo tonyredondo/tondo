@@ -129,7 +129,7 @@ pub unsafe extern "C" fn tondo_rt_group_add(group: *mut GroupObject, join: *mut 
         unlock(&g.lock);
         let j = &mut *join;
         lock(&j.lock);
-        let woken = if j.done {
+        let woken = if j.done.load(Ordering::Relaxed) {
             group_completed(group, index)
         } else {
             j.group = group;
@@ -276,7 +276,7 @@ pub unsafe extern "C" fn tondo_rt_group_cancel(group: *mut GroupObject) {
         for entry in entries.iter() {
             let j = &mut *entry.join;
             lock(&j.lock);
-            if !j.done {
+            if !j.done.load(Ordering::Relaxed) {
                 cancel_task(j.task);
             }
             unlock(&j.lock);

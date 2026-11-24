@@ -78,6 +78,10 @@ const REFLECT_VALUE: i64 = 40;
 /// Size of an array header in the runtime (`ArrayHeader`): `len` is at 8 and
 /// a deque's `head` at 24. An array's `head` is always 0.
 const ARRAY_HEADER: i64 = 32;
+/// Where a map's entries pointer and entry count (`hashes.len`) live in
+/// `MapObject` of the runtime (`maps.rs`).
+const MAP_ENTRIES: i32 = 24;
+const MAP_LEN: i32 = 56;
 /// The bytes a frame keeps for a text made there (`stack.rs`), after its
 /// header: fewer than those of a text whose positions the runtime keeps by
 /// its address, which a frame's room reuses.
@@ -362,6 +366,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     let mut flags = settings::builder();
     // A debug build keeps the code as written, statement after statement.
     flags.set("opt_level", if debug { "none" } else { "speed" }).map_err(|e| e.to_string())?;
+    if !debug {
+        // Align compiled functions to 32 bytes so hot loop headers aligned
+        // inside VCode land on true hardware fetch/uop-cache boundaries.
+        flags.set("log2_min_function_alignment", "5").map_err(|e| e.to_string())?;
+    }
     flags.set("is_pic", "true").map_err(|e| e.to_string())?;
     // Integers of 128 bits pass as C passes them, in two registers.
     flags.set("enable_llvm_abi_extensions", "true").map_err(|e| e.to_string())?;
@@ -1256,9 +1265,14 @@ fn compile_one(
     let dumps = function.dfg.values_labels.is_some();
     let before = ir.then(|| function.display().to_string());
     context.func = function;
-    // What a latent site calls is the runtime, in the same image.
-    for (_, callee) in context.func.dfg.ext_funcs.iter_mut() {
-        callee.colocated |= callee.patchable;
+    // What a latent site or `tondo_rt_keep_registers` calls is the runtime, in
+    // the same image: keeping `keep_registers` colocated emits a direct `bl` on
+    // aarch64 rather than a GOT load through a scratch register that could
+    // overwrite a value kept for a dump.
+    let dfg = &mut context.func.dfg;
+    for (_, callee) in dfg.ext_funcs.iter_mut() {
+        callee.colocated |= callee.patchable
+            || dfg.signatures[callee.signature].call_conv == cranelift_codegen::isa::CallConv::PreserveAll;
     }
     context.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
     let ir = before.map(|before| (before, context.func.display().to_string()));
@@ -2070,6 +2084,66 @@ impl Codegen<'_> {
                 state ^= state << 17;
                 laid.swap(at, (state % (at as u64 + 1)) as usize);
             }
+        } else if self.debug.is_none() && laid.len() > 2 {
+            // Order functions by call-graph DFS from program roots so callers
+            // lie close to their direct callees in the code section.
+            let index_of: HashMap<u32, usize> =
+                laid.iter().enumerate().map(|(i, (job, _))| (job.id.as_u32(), i)).collect();
+            let mut callees: Vec<Vec<usize>> = Vec::with_capacity(laid.len());
+            for (i, (_, code)) in laid.iter().enumerate() {
+                let mut edges = Vec::new();
+                if let Ok(code) = code {
+                    for reloc in &code.relocs {
+                        if let cranelift_module::ModuleRelocTarget::User { namespace: 0, index } = reloc.name
+                            && let Some(&target) = index_of.get(&index)
+                            && target != i
+                            && !edges.contains(&target)
+                        {
+                            edges.push(target);
+                        }
+                    }
+                }
+                callees.push(edges);
+            }
+            let mut roots: Vec<usize> = Vec::with_capacity(laid.len());
+            for (i, (job, _)) in laid.iter().enumerate() {
+                if job.traced.as_deref() == Some("main") {
+                    roots.push(i);
+                }
+            }
+            for (i, (job, _)) in laid.iter().enumerate() {
+                if job.traced.is_some() && job.traced.as_deref() != Some("main") {
+                    roots.push(i);
+                }
+            }
+            for (i, (job, _)) in laid.iter().enumerate() {
+                if job.traced.is_none() {
+                    roots.push(i);
+                }
+            }
+            let mut visited = vec![false; laid.len()];
+            let mut order: Vec<usize> = Vec::with_capacity(laid.len());
+            let mut stack: Vec<usize> = Vec::new();
+            for root in roots {
+                if visited[root] {
+                    continue;
+                }
+                stack.push(root);
+                while let Some(node) = stack.pop() {
+                    if visited[node] {
+                        continue;
+                    }
+                    visited[node] = true;
+                    order.push(node);
+                    for &callee in callees[node].iter().rev() {
+                        if !visited[callee] {
+                            stack.push(callee);
+                        }
+                    }
+                }
+            }
+            let mut slots: Vec<_> = laid.into_iter().map(Some).collect();
+            laid = order.into_iter().map(|i| slots[i].take().expect("each function once")).collect();
         }
         for (job, code) in laid {
             let mut code = code?;
@@ -3822,6 +3896,9 @@ struct FnCodegen<'a, 'b> {
     unfixed: HashSet<u32>,
     /// The static array each local was given, by its whole assignment.
     statics: HashMap<Local, DataId>,
+    /// Remainder results by a non-power-of-two constant (`rem -> (dividend, |divisor|, signed)`),
+    /// so `x % d == 0` / `!= 0` can lower to a multiplicative-inverse range test.
+    rem_consts: HashMap<ir::Value, (ir::Value, u64, bool)>,
     /// Where an explicit panic keeps the numbers a dump shows, and which.
     keeping: Option<(ir::StackSlot, Vec<(Local, Variable)>)>,
     /// The block being built.
@@ -4120,6 +4197,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             assigning: None,
             unfixed: HashSet::new(),
             statics: HashMap::new(),
+            rem_consts: HashMap::new(),
             keeping,
             block: 0,
             probed: None,
@@ -4725,4 +4803,90 @@ fn unwind_target(block: &crate::mir::BlockData, at: usize) -> Option<crate::mir:
 pub(crate) fn std_counted() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("TONDO_COVERAGE_STD").is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn aarch64_keep_registers_preserves_failed_check_locals() {
+        use cranelift_object::object::{Object, ObjectSection, ObjectSymbol, RelocationTarget};
+        use std::io::Read;
+
+        let dir = std::env::temp_dir().join(format!("tondo-aarch64-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("picks.to");
+        std::fs::write(
+            &path,
+            "fn total(values: Array[Int], picks: Array[Int]): Int {\n    var sum = 0\n    var scale = 3\n    \
+             for pick in picks {\n        sum += values[pick] * scale\n        scale += 1\n    }\n    sum\n}\n\n\
+             fn main() {\n    let values = [4, 8, 15, 16, 23, 42]\n    let picks = [0, 2, 5, 9, 1]\n    \
+             _ = total(values, picks)\n}\n",
+        )
+        .unwrap();
+        let target = crate::target::Target::Aarch64;
+        let obj = crate::driver::for_target(target.project(), || {
+            let analysis = crate::driver::analyze(&path).unwrap();
+            crate::driver::compile(&analysis, false, Some(target), None)
+        })
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Parse bindings for F 0 (main with inlined total).
+        let mark = crate::cores::DEFLATED.as_bytes();
+        let pos = obj.windows(mark.len()).position(|w| w == mark).expect("bindings table");
+        let len = u64::from_le_bytes(obj[pos - 16..pos - 8].try_into().unwrap()) as usize;
+        let mut text = String::new();
+        flate2::read::DeflateDecoder::new(&obj[pos + mark.len()..pos + len]).read_to_string(&mut text).unwrap();
+        let mut func = usize::MAX;
+        let mut current = String::new();
+        let mut ranges: std::collections::HashMap<String, Vec<(u32, u32)>> = Default::default();
+        for line in text.lines() {
+            let fields: Vec<&str> = line.split('\t').collect();
+            match fields[..] {
+                ["F", index] => func = index.parse().unwrap(),
+                ["B", name, ..] if func == 0 => current = name.to_string(),
+                ["R", start, end, ..] if func == 0 => {
+                    ranges.entry(current.clone()).or_default().push((start.parse().unwrap(), end.parse().unwrap()));
+                }
+                _ => {}
+            }
+        }
+        let covers =
+            |name: &str, at: u32| ranges.get(name).is_some_and(|rs| rs.iter().any(|&(s, e)| s <= at && at < e));
+
+        // Every `tondo_rt_keep_registers` call in `tondo_f0_main` must be a
+        // direct CALL26 (no GOT scratch register), and every bounds-check
+        // panic site (followed by `sum` and `pick` still live) must cover them.
+        let file = cranelift_object::object::File::parse(&*obj).unwrap();
+        let main_sym = file.symbols().find(|s| s.name() == Ok("tondo_f0_main")).expect("tondo_f0_main");
+        let text_sec = file.section_by_index(main_sym.section_index().unwrap()).unwrap();
+        let main_start = main_sym.address();
+        let main_end = main_start + main_sym.size();
+        let mut keep_sites = Vec::new();
+        for (offset, reloc) in text_sec.relocations() {
+            if offset < main_start || offset >= main_end {
+                continue;
+            }
+            if let RelocationTarget::Symbol(sym_idx) = reloc.target()
+                && file.symbol_by_index(sym_idx).ok().and_then(|s| s.name().ok()) == Some("tondo_rt_keep_registers")
+            {
+                assert_eq!(
+                    reloc.flags(),
+                    cranelift_object::object::RelocationFlags::Elf {
+                        r_type: cranelift_object::object::elf::RelocationType(283),
+                    },
+                    "keep_registers must use direct CALL26 on aarch64"
+                );
+                keep_sites.push((offset - main_start) as u32);
+            }
+        }
+        assert!(keep_sites.len() >= 9, "expected bounds/overflow keep_registers sites, got {}", keep_sites.len());
+        let both_covered = keep_sites.iter().filter(|&&at| covers("sum", at) && covers("pick", at)).count();
+        assert!(
+            both_covered >= 9,
+            "expected all 9 bounds-check panic sites in main to cover both sum and pick, got {both_covered}/{}",
+            keep_sites.len()
+        );
+    }
 }

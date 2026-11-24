@@ -1361,6 +1361,18 @@ fn a_long_call_of_c_holds_up_no_other_task() {
 /// itself says.
 #[test]
 fn a_program_the_tests_run_dumps_into_their_cache() {
+    // The dumps of an earlier run, as CI's cache gives them back owned by
+    // another user, whose directory a crash would not write to.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let dumps = common::cache().join("tondo/dumps");
+        if std::fs::symlink_metadata(&dumps)
+            .is_ok_and(|m| m.uid() != unsafe { libc::geteuid() } || m.mode() & 0o077 != 0)
+        {
+            let _ = std::fs::remove_dir_all(&dumps);
+        }
+    }
     let dir = project_at(
         "dumps-there",
         &[("falls.to", b"fn main() {\n    let empty: Array[Int] = []\n    _ = empty[0]\n}\n")],

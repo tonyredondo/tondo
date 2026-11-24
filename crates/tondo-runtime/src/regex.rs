@@ -266,6 +266,22 @@ pub unsafe extern "C" fn tondo_rt_regex_find(
     let r = object(r);
     let Some(text) = input(r, &text) else { return crate::arrays::int_array_in(region, &[]) };
     let mut at = last.max(0) as usize;
+    if r.regex.captures_len() == 1 {
+        let matched = loop {
+            let Some(matched) = text.get(at..).and_then(|_| r.regex.find_at(text, at)) else {
+                return crate::arrays::int_array_in(region, &[]);
+            };
+            if !matched.is_empty() || matched.end() as i64 != last {
+                break matched;
+            }
+            at += text[at..].chars().next().map_or(1, char::len_utf8);
+        };
+        if found as usize >= r.max_matches {
+            fail(Kind::MatchLimitExceeded, matched.start(), r.max_matches);
+            return crate::arrays::int_array_in(region, &[]);
+        }
+        return crate::arrays::int_array_in(region, &[matched.start() as i64, matched.end() as i64]);
+    }
     let captures = loop {
         let Some(captures) = text.get(at..).and_then(|_| r.regex.captures_at(text, at)) else {
             return crate::arrays::int_array_in(region, &[]);
@@ -280,6 +296,16 @@ pub unsafe extern "C" fn tondo_rt_regex_find(
     if found as usize >= r.max_matches {
         fail(Kind::MatchLimitExceeded, start, r.max_matches);
         return crate::arrays::int_array_in(region, &[]);
+    }
+    let count = captures.len();
+    if count <= 8 {
+        let mut stack = [0i64; 16];
+        for (i, group) in captures.iter().enumerate() {
+            let [s, e] = group.map_or([-1, -1], |m| [m.start() as i64, m.end() as i64]);
+            stack[i * 2] = s;
+            stack[i * 2 + 1] = e;
+        }
+        return crate::arrays::int_array_in(region, &stack[..count * 2]);
     }
     let spans: Vec<i64> =
         captures.iter().flat_map(|group| group.map_or([-1, -1], |m| [m.start() as i64, m.end() as i64])).collect();

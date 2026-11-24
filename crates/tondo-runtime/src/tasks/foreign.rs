@@ -484,7 +484,9 @@ pub unsafe extern "C" fn tondo_rt_callback(
         crate::start_library(start);
     }
     let kept = kept();
-    crate::trace::guard_thread(false, kept);
+    if !kept.guarded.get() {
+        crate::trace::guard_thread(false, kept);
+    }
     // Where it is in the program, the same in another run.
     crate::replay::entered((inner as usize).wrapping_sub(tondo_rt_callback as *const () as usize));
     // On this thread's own stack, as a task that stays here: no stack of its
@@ -504,6 +506,7 @@ pub unsafe extern "C" fn tondo_rt_callback(
         ForeignCall { inner, frame, state: AtomicU8::new(CALL_RUNS), lock: Mutex::new(()), finished: Condvar::new() };
     let task = new_task(
         std::ptr::null_mut(),
+        TASK_IDS.fetch_add(1, Ordering::Relaxed),
         Some(task_stack()),
         std::ptr::null_mut(),
         std::ptr::null(),
@@ -550,38 +553,124 @@ pub unsafe extern "C" fn tondo_rt_callback(
 }
 
 /// Runs a call of C's on the calling thread's stack as a task that stays
-/// there (`Task::native`): it waits on this thread if it waits, and ends as
-/// a task that switched back to its worker would.
+/// there (`Task::native`): it waits on this thread if it waits, and reuses
+/// its thread's initialized `Task` block across calls without locking the
+/// task registry when the callback leaves no resources behind.
 unsafe fn run_here(inner: unsafe extern "C" fn(*mut u8), frame: *mut u8, kept: &Kept) {
+    let task = match kept.call_ready.get() {
+        true => unsafe {
+            let task = kept.call.load(Ordering::Relaxed) as *mut Task;
+            let (id, _) = kept.native();
+            crate::diagnostics::TASKS_SPAWNED.add(1);
+            (*task).id = id;
+            (*task).name = id;
+            (*task).started = 0;
+            (*task).mark.store(TASK_MARK, Ordering::Relaxed);
+            task
+        },
+        false => unsafe { init_native(kept) },
+    };
+    // Visible to `tasks()` and `wait_foreign_calls()` from here until
+    // `CALL_ACTIVE` is cleared below.
+    kept.calling.fetch_add(CALL_ACTIVE, Ordering::Release);
+    worker(|w| w.current.set(task));
+    let traced = tools::running(task);
+    let runner = match kept.runner.get() {
+        Some(runner) => runner,
+        None => first_native_runner(),
+    };
+    enter_tondo_with(runner);
+    unsafe { inner(frame) };
+    leave_tondo_with(runner);
+    worker(|w| w.current.set(std::ptr::null_mut()));
+    tools::stopped(task, traced);
+    if kept.calling.fetch_sub(CALL_ACTIVE, Ordering::AcqRel) != CALL_ACTIVE {
+        wait_uninspected(kept);
+    }
+    unsafe {
+        let t = &mut *task;
+        t.mark.store(0, Ordering::Relaxed);
+        if t.kept_wait.is_some() {
+            Wait::left(t);
+        }
+        let dirty = t.cancelled.load(Ordering::Relaxed)
+            || t.again.load(Ordering::Relaxed)
+            || t.alarm.load(Ordering::Relaxed)
+            || t.held.capacity() != 0
+            || t.locked.load(Ordering::Relaxed) != 0
+            || t.caught.is_some()
+            || t.unwinding.is_some()
+            || t.in_domain
+            || t.service
+            || t.expired
+            || t.detaching
+            || t.flight != 0
+            || !t.context.is_none()
+            || !t.limits.is_null()
+            || t.labels.load(Ordering::Relaxed) != 0
+            || t.own_labels.load(Ordering::Relaxed) != 0
+            || t.probes.capacity() != 0
+            || t.cleanups.capacity() != 0
+            || t.withins.capacity() != 0
+            || t.recovers.capacity() != 0
+            || t.paused.capacity() != 0
+            || t.owner.is_some()
+            || t.deferring != 0
+            || t.cut
+            || t.showing
+            || t.retrying
+            || t.finished
+            || t.allocations.load(Ordering::Relaxed) != 0
+            || t.region_allocations.load(Ordering::Relaxed) != 0;
+        if dirty {
+            clean_native(task, kept);
+        }
+    }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn init_native(kept: &Kept) -> *mut Task {
     kept.find_stack();
-    // In this thread's block, which the call before left: no allocation.
+    let (id, shard) = kept.native();
     let task = new_task(
         std::ptr::null_mut(),
+        id,
         None,
         std::ptr::null_mut(),
         std::ptr::null(),
         ResultKind::Nothing,
         std::ptr::null_mut(),
         kept.call_block(),
-        Some(kept.native()),
+        Some(shard),
     );
     unsafe {
         (*task).main = false;
         (*task).origin = Some(&crate::trace::FOREIGN);
     }
-    // Counted on this thread, as the others' calls are on theirs.
-    kept.calling.store(true, Ordering::Release);
-    worker(|w| w.current.set(task));
-    let traced = tools::running(task);
-    let first = kept.runner.get().is_none();
-    enter_tondo();
-    if first && let Some(runner) = kept.runner.get() {
-        runner.native.store(true, Ordering::SeqCst);
+    kept.call_ready.set(true);
+    task
+}
+
+#[cold]
+#[inline(never)]
+fn first_native_runner() -> &'static Runner {
+    let runner = running_here();
+    runner.native.store(true, Ordering::SeqCst);
+    runner
+}
+
+#[cold]
+#[inline(never)]
+fn wait_uninspected(kept: &Kept) {
+    while kept.calling.load(Ordering::Acquire) & CALL_INSPECTED != 0 {
+        std::hint::spin_loop();
     }
-    unsafe { inner(frame) };
-    leave_tondo();
-    worker(|w| w.current.set(std::ptr::null_mut()));
-    tools::stopped(task, traced);
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn clean_native(task: *mut Task, kept: &Kept) {
     unsafe {
         let in_domain = (*task).in_domain;
         for asked in [&(*task).cancelled, &(*task).again] {
@@ -591,12 +680,10 @@ unsafe fn run_here(inner: unsafe extern "C" fn(*mut u8), frame: *mut u8, kept: &
         }
         Wait::left(&mut *task);
         left_held(&mut *task);
-        unregister(task);
-        (*task).mark = 0;
+        kept.call_ready.set(false);
         std::ptr::drop_in_place(task);
         crate::clock::stopped(in_domain);
     }
-    kept.calling.store(false, Ordering::Release);
 }
 
 #[cfg(test)]
@@ -662,5 +749,88 @@ mod tests {
         assert!(!asks_to_give_way(GIVE_WAY_AFTER - Duration::from_nanos(1), 0));
         assert!(!asks_to_give_way(ADD_AFTER, GIVE_WAY));
         assert!(!asks_to_give_way(ADD_AFTER, GIVE_WAY | deadlines));
+    }
+
+    /// A native C-thread callback reuses its `Task` block across calls, is
+    /// visible to `tasks()` only while active, and drains cancellation
+    /// attention cleanly if cancelled while `tasks()` pins it.
+    #[test]
+    fn a_native_callback_reuses_its_task_and_handles_concurrent_cancel() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        let saw_active = Arc::new(AtomicBool::new(false));
+        let proceed = Arc::new(AtomicBool::new(false));
+        let ptr_seen = Arc::new(AtomicUsize::new(0));
+        let first_ptr = Arc::new(AtomicUsize::new(0));
+        let second_ptr = Arc::new(AtomicUsize::new(0));
+
+        struct State {
+            saw_active: Arc<AtomicBool>,
+            proceed: Arc<AtomicBool>,
+            ptr_out: Arc<AtomicUsize>,
+        }
+
+        unsafe extern "C" fn body(frame: *mut u8) {
+            let state = unsafe { &*(frame as *const State) };
+            state.ptr_out.store(super::super::current() as usize, Ordering::Release);
+            state.saw_active.store(true, Ordering::Release);
+            while !state.proceed.load(Ordering::Acquire) {
+                std::hint::spin_loop();
+            }
+        }
+
+        let saw = saw_active.clone();
+        let go = proceed.clone();
+        let out1 = first_ptr.clone();
+        let out2 = second_ptr.clone();
+        let p = ptr_seen.clone();
+
+        let thread = std::thread::spawn(move || {
+            let kept = super::super::kept();
+            // Call 1: clean, returns immediately.
+            let done = Arc::new(AtomicBool::new(true));
+            let s1 = State { saw_active: Arc::new(AtomicBool::new(false)), proceed: done.clone(), ptr_out: out1 };
+            unsafe { super::run_here(body, (&raw const s1) as *mut u8, kept) };
+            assert!(kept.call_ready.get());
+
+            // Call 2: reuses the exact same Task block cleanly.
+            let s2 = State { saw_active: Arc::new(AtomicBool::new(false)), proceed: done.clone(), ptr_out: out2 };
+            unsafe { super::run_here(body, (&raw const s2) as *mut u8, kept) };
+            assert!(kept.call_ready.get());
+
+            // Call 3: pauses while the test thread inspects `tasks()` and cancels it.
+            let s3 = State { saw_active: saw, proceed: go, ptr_out: p };
+            unsafe { super::run_here(body, (&raw const s3) as *mut u8, kept) };
+            // Cancellation marked it dirty and dropped/reset the Task after `all` unpinned it.
+            assert!(!kept.call_ready.get());
+
+            // Call 4: re-initializes cleanly into the same block without stale cancellation.
+            let out4 = Arc::new(AtomicUsize::new(0));
+            let s4 = State { saw_active: Arc::new(AtomicBool::new(false)), proceed: done, ptr_out: out4.clone() };
+            unsafe { super::run_here(body, (&raw const s4) as *mut u8, kept) };
+            assert!(kept.call_ready.get());
+            assert_eq!(out4.load(Ordering::Acquire), kept.call.load(Ordering::Relaxed) as usize);
+        });
+
+        while !saw_active.load(Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+        let task_addr = ptr_seen.load(Ordering::Acquire);
+        assert_ne!(task_addr, 0);
+        {
+            let all = super::super::tasks();
+            assert!(all.iter().any(|&addr| addr == task_addr));
+            // Cancel while pinned by `all` and let the callback try to return.
+            unsafe { super::super::cancel_task(task_addr as *mut super::super::Task) };
+            proceed.store(true, Ordering::Release);
+            // Brief yield so the C thread exercises `wait_uninspected` before `all` drops.
+            std::thread::yield_now();
+        }
+        thread.join().unwrap();
+
+        assert_eq!(first_ptr.load(Ordering::Acquire), second_ptr.load(Ordering::Acquire));
+        assert_eq!(first_ptr.load(Ordering::Acquire), task_addr);
+        assert!(!super::super::tasks().iter().any(|&addr| addr == task_addr));
     }
 }

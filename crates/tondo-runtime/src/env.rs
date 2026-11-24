@@ -7,23 +7,54 @@ use super::{ArrayHeader, MapGlue, MapObject, Str, str_bytes};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 type Table = BTreeMap<Vec<u8>, Vec<u8>>;
+pub(crate) type EnvList = Vec<(OsString, OsString)>;
 
-static TABLE: Mutex<Option<Table>> = Mutex::new(None);
-
-fn table() -> MutexGuard<'static, Option<Table>> {
-    let mut table = TABLE.lock().unwrap_or_else(|e| e.into_inner());
-    table.get_or_insert_with(|| std::env::vars_os().map(|(k, v)| (k.into_vec(), v.into_vec())).collect());
-    table
+struct State {
+    table: Table,
+    /// Prepared copy for child processes, cleared whenever `table` changes.
+    cached: Option<Arc<EnvList>>,
 }
 
-/// The environment processes started now inherit.
-pub(crate) fn environment() -> Vec<(OsString, OsString)> {
-    let table = table();
-    let table = table.as_ref().unwrap();
-    table.iter().map(|(k, v)| (OsString::from_vec(k.clone()), OsString::from_vec(v.clone()))).collect()
+static STATE: Mutex<Option<State>> = Mutex::new(None);
+/// True once `env.set`, `env.setAll` or `env.remove` has diverged from the
+/// host process's environment (cleared by `env.syncNative`).
+static MODIFIED: AtomicBool = AtomicBool::new(false);
+
+fn state() -> MutexGuard<'static, Option<State>> {
+    let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    guard.get_or_insert_with(|| State {
+        table: std::env::vars_os().map(|(k, v)| (k.into_vec(), v.into_vec())).collect(),
+        cached: None,
+    });
+    guard
+}
+
+/// The environment child processes inherit when the program has changed it,
+/// or `None` when the host's own environment is still unchanged.
+pub(crate) fn inherited() -> Option<Arc<EnvList>> {
+    if !MODIFIED.load(Ordering::Acquire) {
+        return None;
+    }
+    let mut guard = state();
+    let state = guard.as_mut().unwrap();
+    let cached = state.cached.get_or_insert_with(|| {
+        Arc::new(
+            state.table.iter().map(|(k, v)| (OsString::from_vec(k.clone()), OsString::from_vec(v.clone()))).collect(),
+        )
+    });
+    Some(Arc::clone(cached))
+}
+
+/// The current `PATH` variable without cloning the rest of the environment.
+pub(crate) fn path_var() -> Option<OsString> {
+    if !MODIFIED.load(Ordering::Acquire) {
+        return std::env::var_os("PATH");
+    }
+    state().as_ref().unwrap().table.get(b"PATH".as_slice()).map(|v| OsString::from_vec(v.clone()))
 }
 
 /// `bytes` as UTF-8 reads them, in `region` when it is not null.
@@ -90,7 +121,7 @@ pub(crate) fn arguments() -> &'static [OsString] {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_env_get(name: *const Str, region: *mut crate::regions::Region) -> *mut Str {
     let name = unsafe { str_bytes(&name) };
-    table().as_ref().unwrap().get(name).map_or(std::ptr::null_mut(), |value| text(region, value))
+    state().as_ref().unwrap().table.get(name).map_or(std::ptr::null_mut(), |value| text(region, value))
 }
 
 /// `env.vars()`, by name, as a `Map[String, String]` with `glue`.
@@ -98,7 +129,7 @@ pub unsafe extern "C" fn tondo_rt_env_get(name: *const Str, region: *mut crate::
 pub unsafe extern "C" fn tondo_rt_env_vars(glue: *const MapGlue) -> *mut MapObject {
     let mut map = super::tondo_rt_map_new(16, 8);
     let mut old = [0u8; 16];
-    for (name, value) in table().as_ref().unwrap() {
+    for (name, value) in &state().as_ref().unwrap().table {
         let (key, value) = (text(std::ptr::null_mut(), name), text(std::ptr::null_mut(), value));
         unsafe {
             super::tondo_rt_map_insert(
@@ -118,7 +149,11 @@ pub unsafe extern "C" fn tondo_rt_env_vars(glue: *const MapGlue) -> *mut MapObje
 pub unsafe extern "C" fn tondo_rt_env_set(name: *const Str, value: *const Str, location: *const Str) {
     let (name, value) = unsafe { (str_bytes(&name), str_bytes(&value)) };
     if check(name, value, location) {
-        table().as_mut().unwrap().insert(name.to_vec(), value.to_vec());
+        let mut guard = state();
+        let state = guard.as_mut().unwrap();
+        state.table.insert(name.to_vec(), value.to_vec());
+        state.cached = None;
+        MODIFIED.store(true, Ordering::Release);
     }
 }
 
@@ -133,7 +168,11 @@ pub unsafe extern "C" fn tondo_rt_env_set_all(values: *mut MapObject, location: 
         })
         .collect();
     if entries.iter().all(|(name, value)| check(name, value, location)) {
-        table().as_mut().unwrap().extend(entries);
+        let mut guard = state();
+        let state = guard.as_mut().unwrap();
+        state.table.extend(entries);
+        state.cached = None;
+        MODIFIED.store(true, Ordering::Release);
     }
 }
 
@@ -141,7 +180,11 @@ pub unsafe extern "C" fn tondo_rt_env_set_all(values: *mut MapObject, location: 
 pub unsafe extern "C" fn tondo_rt_env_remove(name: *const Str, location: *const Str) {
     let name = unsafe { str_bytes(&name) };
     if check(name, b"", location) {
-        table().as_mut().unwrap().remove(name);
+        let mut guard = state();
+        let state = guard.as_mut().unwrap();
+        state.table.remove(name);
+        state.cached = None;
+        MODIFIED.store(true, Ordering::Release);
     }
 }
 
@@ -301,8 +344,8 @@ pub unsafe extern "C" fn tondo_rt_env_set_current_directory(path: *const Str) ->
 /// `env.syncNative()`: makes the host's environment the program's.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_env_sync_native() {
-    let table = table();
-    let table = table.as_ref().unwrap();
+    let guard = state();
+    let table = &guard.as_ref().unwrap().table;
     for (name, _) in std::env::vars_os() {
         if !table.contains_key(name.as_bytes()) {
             unsafe { std::env::remove_var(name) };
@@ -311,4 +354,5 @@ pub extern "C" fn tondo_rt_env_sync_native() {
     for (name, value) in table {
         unsafe { std::env::set_var(std::ffi::OsStr::from_bytes(name), std::ffi::OsStr::from_bytes(value)) };
     }
+    MODIFIED.store(false, Ordering::Release);
 }

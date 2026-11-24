@@ -46,6 +46,26 @@ pub(crate) fn new_in<T: Any + Send + Sync>(region: *mut super::regions::Region, 
     unsafe { super::objects::make(region, Inner { header, value }) as *mut NativeObject }
 }
 
+/// A static object holding `value`, immortal so retain and release ignore it.
+pub(crate) struct Static<T>(Inner<T>);
+
+unsafe impl<T: Sync> Sync for Static<T> {}
+
+impl<T: Any + Send + Sync> Static<T> {
+    pub(crate) fn new(value: T) -> Static<T> {
+        let header = NativeObject {
+            rc: AtomicUsize::new(super::strings::IMMORTAL),
+            drop: drop_inner::<T>,
+            id: TypeId::of::<T>(),
+        };
+        Static(Inner { header, value })
+    }
+
+    pub(crate) fn ptr(&'static self) -> *mut NativeObject {
+        &self.0.header as *const NativeObject as *mut NativeObject
+    }
+}
+
 /// The value of an object, when it is a `T`.
 pub(crate) fn get<'a, T: Any>(object: *mut NativeObject) -> Option<&'a T> {
     if object.is_null() || unsafe { (*object).id } != TypeId::of::<T>() {
@@ -57,7 +77,10 @@ pub(crate) fn get<'a, T: Any>(object: *mut NativeObject) -> Option<&'a T> {
 /// One more reference to an object of the heap, which the runtime keeps.
 pub(crate) unsafe fn retain(object: *mut NativeObject) {
     if !object.is_null() {
-        unsafe { (*object).rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed) };
+        let rc = unsafe { &(*object).rc };
+        if rc.load(std::sync::atomic::Ordering::Relaxed) != super::strings::IMMORTAL {
+            rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 

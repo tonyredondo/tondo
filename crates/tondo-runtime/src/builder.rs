@@ -38,6 +38,30 @@ impl Builder {
         unsafe { (*self.text).cap }
     }
 
+    /// The backing buffer pointer, current length and capacity of a non-short
+    /// builder, for tight loops that write directly into the string's storage.
+    #[inline(always)]
+    pub(crate) fn parts(&self) -> (*mut u8, usize, usize) {
+        debug_assert!(!short(self.text));
+        unsafe { ((self.text as *mut u8).add(HEADER), self.len, self.room()) }
+    }
+
+    /// Updates the length after writing through `parts`.
+    #[inline(always)]
+    pub(crate) fn set_len(&mut self, len: usize) {
+        debug_assert!(!short(self.text) && len <= self.room());
+        self.len = len;
+    }
+
+    /// Ensures room for `more` bytes past `self.len` in a non-short builder.
+    #[inline(always)]
+    pub(crate) fn reserve(&mut self, more: usize) {
+        debug_assert!(!short(self.text));
+        if self.len + more > self.room() {
+            self.grow(more);
+        }
+    }
+
     #[inline]
     pub fn extend(&mut self, bytes: &[u8]) {
         if short(self.text) {
