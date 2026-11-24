@@ -35,6 +35,7 @@ pub(crate) unsafe fn make<T>(region: *mut Region, object: T) -> *mut T {
 /// dropped.
 pub(crate) fn dropped(rc: &AtomicUsize) -> Option<bool> {
     let before = match rc.load(Ordering::Relaxed) {
+        super::strings::IMMORTAL => return None,
         // The last reference: no other thread holds one to count with.
         last @ (1 | LAST_IN_REGION) => last,
         _ => rc.fetch_sub(1, Ordering::Release),

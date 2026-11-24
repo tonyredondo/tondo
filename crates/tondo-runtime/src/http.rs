@@ -59,7 +59,7 @@ pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
                 false => std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).max(2)),
             };
             let mut builder = tokio::runtime::Builder::new_multi_thread();
-            builder.worker_threads(workers).thread_name("tondo-http");
+            builder.worker_threads(workers).thread_name("tondo-http").on_thread_start(crate::tasks::find_thread_stack);
             builder
         }
     };
@@ -387,7 +387,8 @@ pub(crate) fn stream_of(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_body_empty() -> *mut NativeObject {
-    native::new(Body::Empty)
+    static EMPTY: OnceLock<native::Static<Body>> = OnceLock::new();
+    EMPTY.get_or_init(|| native::Static::new(Body::Empty)).ptr()
 }
 
 #[unsafe(no_mangle)]
@@ -579,11 +580,29 @@ pub unsafe extern "C" fn tondo_rt_http_send(
         Some(Err(problem)) => return native::new(Response::failed("connect", problem.clone())),
         None => return native::new(Response::failed("protocol", "not an HTTP client".into())),
     };
-    let Ok(method) = hyper::Method::from_bytes(text(method).as_bytes()) else {
-        return native::new(Response::failed("protocol", format!("`{}` is not an HTTP method", text(method))));
+    let method_text = unsafe { crate::str_text(&method) };
+    let Ok(method) = hyper::Method::from_bytes(method_text.as_bytes()) else {
+        return native::new(Response::failed("protocol", format!("`{method_text}` is not an HTTP method")));
     };
-    let headers: Vec<(String, String)> =
-        strings(headers).chunks(2).filter_map(|pair| Some((pair.first()?.clone(), pair.get(1)?.clone()))).collect();
+    let url_text = unsafe { crate::str_text(&url) };
+    let url = match url::Url::parse(url_text) {
+        Ok(url) => url,
+        Err(error) => return native::new(Response::failed("url", format!("{url_text}: {error}"))),
+    };
+    let headers: Vec<(String, String)> = if headers.is_null() {
+        Vec::new()
+    } else {
+        let count = unsafe { (*headers).len };
+        let mut pairs = Vec::with_capacity(count / 2);
+        let mut i = 0;
+        while i + 1 < count {
+            let name = unsafe { crate::str_text(&*(element(headers, 8, i) as *const *const Str)) };
+            let value = unsafe { crate::str_text(&*(element(headers, 8, i + 1) as *const *const Str)) };
+            pairs.push((name.to_owned(), value.to_owned()));
+            i += 2;
+        }
+        pairs
+    };
     use super::client::Body as Sent;
     let body = match native::get::<Body>(body) {
         None | Some(Body::Empty) => Sent::Empty,
@@ -602,7 +621,7 @@ pub unsafe extern "C" fn tondo_rt_http_send(
         },
     };
     let timeout = (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms as u64));
-    let request = super::client::Request { method, url: text(url), headers, body, timeout };
+    let request = super::client::Request { method, url, headers, body, timeout };
     // Polled by the task in place, as the server's futures are; only the
     // futures of the connections run at the workers' turns.
     let response = match super::io::wait_for(async move { client.send(request).await }) {
@@ -668,7 +687,7 @@ pub extern "C" fn tondo_rt_http_header(
     name: *const Str,
     region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
-    let values = response(object).headers.get_all(text(name).as_str());
+    let values = response(object).headers.get_all(unsafe { crate::str_text(&name) });
     crate::arrays::texts_array_in(region, || values.iter().map(|value| value.as_bytes()))
 }
 
@@ -715,14 +734,60 @@ pub extern "C" fn tondo_rt_http_read_all(
     }
 }
 
-/// A response's body as the host of a stream: chunks as they arrive.
+/// A response's body, kept directly until a read must wait asynchronously.
+type ChunkResult = Result<Option<Bytes>, super::client::Failure>;
+
+enum ChunkSlot {
+    Direct(Option<super::client::Received>),
+    Shared(Arc<Mutex<(Option<super::client::Received>, Option<ChunkResult>)>>),
+}
+
+/// A response's body as the host of a stream: chunks as they arrive, polled on
+/// the calling task without blocking a host thread.
 struct Chunks {
-    body: Option<super::client::Received>,
+    slot: ChunkSlot,
     chunk: Bytes,
     /// Whether another read took the body before this one.
     taken: bool,
     /// Whether to give the body's Windows-1252 as UTF-8.
     windows_1252: bool,
+    waiting: bool,
+    gave_up: Option<std::io::ErrorKind>,
+}
+
+impl Chunks {
+    fn poll_next_chunk(&mut self) -> Option<ChunkResult> {
+        let poll_body = |body: &mut Option<super::client::Received>| -> Option<ChunkResult> {
+            let Some(body) = body.as_mut() else { return Some(Ok(None)) };
+            let polled = if body.has_deadline() {
+                let _context = runtime().enter();
+                body.poll_chunk(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+            } else {
+                body.poll_chunk(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+            };
+            match polled {
+                std::task::Poll::Ready(result) => Some(result),
+                std::task::Poll::Pending => None,
+            }
+        };
+        match &mut self.slot {
+            ChunkSlot::Direct(body) => poll_body(body),
+            ChunkSlot::Shared(shared) => {
+                let mut state = shared.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(result) = state.1.take() {
+                    return Some(result);
+                }
+                poll_body(&mut state.0)
+            }
+        }
+    }
+
+    fn finish_body(&mut self) {
+        match &mut self.slot {
+            ChunkSlot::Direct(body) => *body = None,
+            ChunkSlot::Shared(shared) => shared.lock().unwrap_or_else(|e| e.into_inner()).0 = None,
+        }
+    }
 }
 
 impl Host for Chunks {
@@ -731,11 +796,17 @@ impl Host for Chunks {
             return Err(std::io::Error::other(ALREADY_READ));
         }
         while self.chunk.is_empty() {
-            let Some(body) = self.body.as_mut() else { return Ok(0) };
-            match runtime().block_on(body.chunk()) {
+            let Some(next) = self.poll_next_chunk() else {
+                self.waiting = self.gave_up.is_none();
+                return Err(self.gave_up.unwrap_or(std::io::ErrorKind::WouldBlock).into());
+            };
+            match next {
                 Ok(Some(chunk)) if self.windows_1252 => self.chunk = windows_1252(&chunk).into_bytes().into(),
                 Ok(Some(chunk)) => self.chunk = chunk,
-                Ok(None) => self.body = None,
+                Ok(None) => {
+                    self.finish_body();
+                    return Ok(0);
+                }
                 // `json()`, which gave the bound, asks `passed` and says it.
                 Err(failure) if failure.0 == "too large" => {
                     return Err(std::io::Error::other("the body is larger than its bound"));
@@ -750,18 +821,67 @@ impl Host for Chunks {
     }
 
     fn passed(&self) -> bool {
-        self.body.as_ref().is_some_and(super::client::Received::passed)
+        match &self.slot {
+            ChunkSlot::Direct(body) => body.as_ref().is_some_and(super::client::Received::passed),
+            ChunkSlot::Shared(shared) => {
+                shared.lock().unwrap_or_else(|e| e.into_inner()).0.as_ref().is_some_and(super::client::Received::passed)
+            }
+        }
     }
 
     fn left(&self) -> Option<usize> {
         if self.windows_1252 || self.taken {
             return None;
         }
-        let rest = match &self.body {
-            Some(body) => body.left()?,
-            None => 0,
+        let rest = match &self.slot {
+            ChunkSlot::Direct(Some(body)) => body.left()?,
+            ChunkSlot::Direct(None) => 0,
+            ChunkSlot::Shared(shared) => {
+                let state = shared.lock().unwrap_or_else(|e| e.into_inner());
+                let came = match &state.1 {
+                    Some(Ok(Some(bytes))) => bytes.len(),
+                    _ => 0,
+                };
+                let body = match &state.0 {
+                    Some(body) => body.left()?,
+                    None => 0,
+                };
+                came + body
+            }
         };
         Some(self.chunk.len() + rest)
+    }
+
+    fn blocked(&mut self) -> Option<crate::io::Ready> {
+        if !std::mem::take(&mut self.waiting) {
+            return None;
+        }
+        let shared = match &mut self.slot {
+            ChunkSlot::Shared(shared) => shared.clone(),
+            ChunkSlot::Direct(body) => {
+                let shared = Arc::new(Mutex::new((body.take(), None)));
+                self.slot = ChunkSlot::Shared(shared.clone());
+                shared
+            }
+        };
+        Some(crate::io::Ready::Other(Box::pin(std::future::poll_fn(move |context| {
+            let mut state = shared.lock().unwrap_or_else(|e| e.into_inner());
+            if state.1.is_some() {
+                return std::task::Poll::Ready(());
+            }
+            let Some(body) = state.0.as_mut() else { return std::task::Poll::Ready(()) };
+            match body.poll_chunk(context) {
+                std::task::Poll::Ready(result) => {
+                    state.1 = Some(result);
+                    std::task::Poll::Ready(())
+                }
+                std::task::Poll::Pending => std::task::Poll::Pending,
+            }
+        }))))
+    }
+
+    fn give_up(&mut self, kind: Option<std::io::ErrorKind>) {
+        self.gave_up = kind;
     }
 }
 
@@ -785,8 +905,15 @@ pub extern "C" fn tondo_rt_http_body(object: *mut NativeObject, windows_1252: u8
         *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
     }
     crate::io::stream(
-        Box::new(Chunks { body, chunk: Bytes::new(), taken, windows_1252: windows_1252 != 0 }),
-        Mode::Long,
+        Box::new(Chunks {
+            slot: ChunkSlot::Direct(body),
+            chunk: Bytes::new(),
+            taken,
+            windows_1252: windows_1252 != 0,
+            waiting: false,
+            gave_up: None,
+        }),
+        Mode::Ready,
         false,
     )
 }

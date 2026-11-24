@@ -656,12 +656,19 @@ pub fn hot(profile: &Profile, kind: Option<&str>) -> Result<Hot, String> {
     };
     for (frames, values, labels) in &profile.samples {
         let value = values.get(index).copied().unwrap_or(0);
-        if value == 0 || frames.is_empty() {
+        if value == 0 {
             continue;
         }
         total += value;
         for (key, label) in labels.iter().filter(|(key, _)| key != "thread") {
             *labeled.entry((key.clone(), label.clone())).or_default() += value;
+        }
+        if frames.is_empty() {
+            let entry = functions.entry(("<unknown>".to_string(), String::new())).or_default();
+            entry.0 += value;
+            entry.1 += value;
+            *stacks.entry(vec!["<unknown>".to_string()]).or_default() += value;
+            continue;
         }
         let mut seen_functions = std::collections::HashSet::new();
         let mut seen_lines = std::collections::HashSet::new();

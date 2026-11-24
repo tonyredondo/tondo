@@ -16,7 +16,7 @@ use crate::array_items;
 use crate::io::{Host, Mode, StreamObject};
 use bytes::{Buf, Bytes};
 use http_body_util::combinators::UnsyncBoxBody;
-use http_body_util::{BodyExt, Full, StreamBody};
+use http_body_util::{BodyExt, StreamBody};
 use hyper::body::{Frame, Incoming};
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
@@ -25,7 +25,40 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use tokio::sync::{oneshot, watch};
 
-type Body = UnsyncBoxBody<Bytes, std::io::Error>;
+enum Body {
+    Empty,
+    Full(Option<Bytes>),
+    Stream(UnsyncBoxBody<Bytes, std::io::Error>),
+}
+
+impl hyper::body::Body for Body {
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, std::io::Error>>> {
+        match self.get_mut() {
+            Body::Empty => Poll::Ready(None),
+            Body::Full(bytes) => Poll::Ready(bytes.take().filter(|b| !b.is_empty()).map(|b| Ok(Frame::data(b)))),
+            Body::Stream(stream) => Pin::new(stream).poll_frame(cx),
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        match self {
+            Body::Empty => true,
+            Body::Full(bytes) => bytes.as_ref().is_none_or(Bytes::is_empty),
+            Body::Stream(stream) => stream.is_end_stream(),
+        }
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        match self {
+            Body::Empty => hyper::body::SizeHint::with_exact(0),
+            Body::Full(bytes) => hyper::body::SizeHint::with_exact(bytes.as_ref().map_or(0, Bytes::len) as u64),
+            Body::Stream(stream) => stream.size_hint(),
+        }
+    }
+}
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
@@ -156,7 +189,7 @@ struct Idle {
     inner: Incoming,
     idle: std::time::Duration,
     sleep: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
-    stalled: Arc<std::sync::atomic::AtomicBool>,
+    answering: Arc<Answering>,
 }
 
 impl hyper::body::Body for Idle {
@@ -181,7 +214,7 @@ impl hyper::body::Body for Idle {
                 match sleep.as_mut().poll(cx) {
                     Poll::Ready(()) => {
                         this.sleep = None;
-                        this.stalled.store(true, std::sync::atomic::Ordering::Release);
+                        this.answering.stalled.store(true, std::sync::atomic::Ordering::Release);
                         let message = format!("the body stopped arriving for {} seconds", idle.as_secs());
                         Poll::Ready(Some(Err(message.into())))
                     }
@@ -287,12 +320,15 @@ impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Unhurried<S> {
 }
 
 /// Who answers a request: the task, which goes on only while its client
-/// waits, whether the response went out, and whether the client is gone.
+/// waits, whether the response went out, whether the client is gone, and
+/// whether reading the body passed its limit or stalled.
 #[derive(Default)]
 struct Answering {
     task: std::sync::atomic::AtomicU64,
     answered: std::sync::atomic::AtomicBool,
     gone: std::sync::atomic::AtomicBool,
+    exceeded: std::sync::atomic::AtomicBool,
+    stalled: std::sync::atomic::AtomicBool,
 }
 
 impl Answering {
@@ -351,12 +387,10 @@ struct Request {
     /// Whether the body was taken to be read, which happens once.
     taken: std::sync::atomic::AtomicBool,
     /// The bytes its body may have, which the program may change before
-    /// it reads it, and whether a reading went past them.
+    /// it reads it.
     limit: std::sync::atomic::AtomicUsize,
-    exceeded: Arc<std::sync::atomic::AtomicBool>,
-    /// The longest its body may stop arriving, and whether it did.
+    /// The longest its body may stop arriving.
     body_timeout: std::time::Duration,
-    stalled: Arc<std::sync::atomic::AtomicBool>,
     reply: Mutex<Option<oneshot::Sender<hyper::Response<Body>>>>,
     upgrade: Mutex<Option<hyper::upgrade::OnUpgrade>>,
     answering: Arc<Answering>,
@@ -380,9 +414,7 @@ impl Request {
             body: Mutex::new(None),
             taken: Default::default(),
             limit: Default::default(),
-            exceeded: Arc::default(),
             body_timeout: std::time::Duration::MAX,
-            stalled: Arc::default(),
             reply: Mutex::new(None),
             upgrade: Mutex::new(None),
             answering: Arc::default(),
@@ -395,14 +427,14 @@ impl Request {
         let limit = self.limit.load(std::sync::atomic::Ordering::Acquire);
         self.taken.store(true, std::sync::atomic::Ordering::Release);
         lock(&self.body).take().map(|body| {
-            let idle = Idle { inner: body, idle: self.body_timeout, sleep: None, stalled: self.stalled.clone() };
+            let idle = Idle { inner: body, idle: self.body_timeout, sleep: None, answering: self.answering.clone() };
             http_body_util::Limited::new(idle, limit)
         })
     }
 
     /// Records a failure to read the body: past its limit, or another.
     fn body_failed(&self, error: &(dyn std::error::Error + 'static)) -> String {
-        note_exceeded(error, &self.exceeded);
+        note_exceeded(error, &self.answering.exceeded);
         error.to_string()
     }
 
@@ -433,7 +465,8 @@ fn request<'a>(object: *mut NativeObject) -> &'a Request {
 }
 
 fn full(bytes: impl Into<Bytes>) -> Body {
-    Full::new(bytes.into()).map_err(|never| match never {}).boxed_unsync()
+    let bytes = bytes.into();
+    if bytes.is_empty() { Body::Empty } else { Body::Full(Some(bytes)) }
 }
 
 fn plain(status: u16, message: &str) -> hyper::Response<Body> {
@@ -447,7 +480,30 @@ fn response(status: i64, headers: &[String], body: Body) -> hyper::Response<Body
     let mut builder = hyper::Response::builder().status(u16::try_from(status).unwrap_or(500));
     for pair in headers.chunks(2) {
         if let [name, value] = pair {
-            builder = builder.header(name.as_str(), value.as_str());
+            match (hyper::header::HeaderName::try_from(name.as_str()), super::client::header_value(value.as_str())) {
+                (Ok(name), Ok(value)) => builder = builder.header(name, value),
+                _ => builder = builder.header(name.as_str(), value.as_str()),
+            }
+        }
+    }
+    builder.body(body).unwrap_or_else(|error| plain(500, &format!("a header is not valid: {error}")))
+}
+
+/// A response with the status and a Tondo header array, reading its strings in
+/// place without allocating intermediate `String`s.
+fn response_from_array(status: i64, headers: *mut ArrayHeader, body: Body) -> hyper::Response<Body> {
+    let mut builder = hyper::Response::builder().status(u16::try_from(status).unwrap_or(500));
+    if !headers.is_null() {
+        let count = unsafe { (*headers).len };
+        let mut i = 0;
+        while i + 1 < count {
+            let name = unsafe { crate::str_text(&*(super::element(headers, 8, i) as *const *const Str)) };
+            let value = unsafe { crate::str_text(&*(super::element(headers, 8, i + 1) as *const *const Str)) };
+            match (hyper::header::HeaderName::try_from(name), super::client::header_value(value)) {
+                (Ok(name), Ok(value)) => builder = builder.header(name, value),
+                _ => builder = builder.header(name, value),
+            }
+            i += 2;
         }
     }
     builder.body(body).unwrap_or_else(|error| plain(500, &format!("a header is not valid: {error}")))
@@ -1124,7 +1180,11 @@ async fn serving(
     // Weak: the exchange holds this future, which would keep it alive.
     let exchange = Arc::downgrade(&exchange);
     let streams = Streams(exchange.clone());
-    let serve = hyper::service::service_fn(move |request| {
+    let serve = hyper::service::service_fn(move |mut request| {
+        // Detach before returning the future so hyper's `poll_read_keep_alive`
+        // (which runs before the future is polled) sees `ref_cnt == 1` and
+        // reclaims its 8 KiB `read_buf` in place.
+        detach_head(&mut request);
         handle(request, exchange.clone(), remote.clone(), secure, client.clone(), limits, answering.clone())
     });
     let mut builder = hyper_util::server::conn::auto::Builder::new(streams);
@@ -1150,6 +1210,64 @@ async fn serving(
                 } => {}
             }
         }
+    }
+}
+
+/// Copies a small bodyless HTTP/1 request head (`uri` and `headers`) out of
+/// hyper's 8 KiB `read_buf` into one compact buffer before `handle` is
+/// constructed, so hyper's `poll_read_keep_alive` reclaims the 8 KiB buffer in
+/// place instead of allocating a fresh 8 KiB buffer on every request.
+fn detach_head(request: &mut hyper::Request<Incoming>) {
+    if request.version() >= hyper::Version::HTTP_2 || !hyper::body::Body::is_end_stream(request.body()) {
+        return;
+    }
+    let uri = request.uri();
+    let uri_len = if uri.scheme().is_none() && uri.authority().is_none() {
+        match uri.path_and_query() {
+            Some(pq) => pq.as_str().len(),
+            None => return,
+        }
+    } else {
+        return;
+    };
+    let mut total = uri_len;
+    for value in request.headers().values() {
+        if super::client::static_header_value(value.as_bytes()).is_none() {
+            total += value.len();
+        }
+    }
+    if total > 2048 {
+        return;
+    }
+    let mut raw = Vec::with_capacity(total);
+    raw.extend_from_slice(request.uri().path_and_query().unwrap().as_str().as_bytes());
+    for value in request.headers().values() {
+        if super::client::static_header_value(value.as_bytes()).is_none() {
+            raw.extend_from_slice(value.as_bytes());
+        }
+    }
+    let shared = Bytes::from(raw);
+    if let Ok(copied) = hyper::Uri::from_maybe_shared(shared.slice(0..uri_len)) {
+        *request.uri_mut() = copied;
+    }
+    let mut offset = uri_len;
+    for value in request.headers_mut().values_mut() {
+        let sensitive = value.is_sensitive();
+        if let Some(mut kept) = super::client::static_header_value(value.as_bytes()) {
+            if sensitive {
+                kept.set_sensitive(true);
+            }
+            *value = kept;
+            continue;
+        }
+        let end = offset + value.len();
+        if let Ok(mut copied) = hyper::header::HeaderValue::from_maybe_shared(shared.slice(offset..end)) {
+            if sensitive {
+                copied.set_sensitive(true);
+            }
+            *value = copied;
+        }
+        offset = end;
     }
 }
 
@@ -1188,9 +1306,7 @@ async fn handle(
         body: Mutex::new(Some(body)),
         taken: Default::default(),
         limit: std::sync::atomic::AtomicUsize::new(limits.body),
-        exceeded: Arc::default(),
         body_timeout: limits.body_timeout,
-        stalled: Arc::default(),
         reply: Mutex::new(Some(reply)),
         upgrade: Mutex::new(upgrade),
         answering: Arc::default(),
@@ -1382,15 +1498,19 @@ pub extern "C" fn tondo_rt_http_request_headers(
 /// A frame of a request's body, or its end.
 type BodyFrame = Option<Result<Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>>;
 
+/// A request's body, kept directly until a read must wait asynchronously.
+enum BodySlot {
+    Direct(Option<http_body_util::Limited<Idle>>),
+    Shared(Arc<Mutex<(Option<http_body_util::Limited<Idle>>, Option<BodyFrame>)>>),
+}
+
 /// A request's body as the host of a stream, which waits for the body with
 /// its task, not its thread: the connection that brings it is polled by
 /// the workers, which a thread that waited could be.
 struct RequestBody {
-    body: Arc<Mutex<Option<http_body_util::Limited<Idle>>>>,
-    /// A frame that came as it waited.
-    came: Arc<Mutex<Option<BodyFrame>>>,
+    slot: BodySlot,
     chunk: Bytes,
-    exceeded: Arc<std::sync::atomic::AtomicBool>,
+    answering: Arc<Answering>,
     waiting: bool,
     gave_up: Option<std::io::ErrorKind>,
 }
@@ -1398,16 +1518,31 @@ struct RequestBody {
 impl RequestBody {
     /// The next frame, if one is there now.
     fn frame(&mut self) -> Option<BodyFrame> {
-        if let Some(frame) = lock(&self.came).take() {
-            return Some(frame);
+        let poll_body = |body: &mut Option<http_body_util::Limited<Idle>>| -> Option<BodyFrame> {
+            let Some(body) = body.as_mut() else { return Some(None) };
+            // Its timer is the runtime's.
+            let _context = runtime().enter();
+            match hyper::body::Body::poll_frame(Pin::new(body), &mut Context::from_waker(std::task::Waker::noop())) {
+                Poll::Ready(frame) => Some(frame),
+                Poll::Pending => None,
+            }
+        };
+        match &mut self.slot {
+            BodySlot::Direct(body) => poll_body(body),
+            BodySlot::Shared(shared) => {
+                let mut state = lock(shared);
+                if let Some(frame) = state.1.take() {
+                    return Some(frame);
+                }
+                poll_body(&mut state.0)
+            }
         }
-        let mut body = lock(&self.body);
-        let Some(body) = body.as_mut() else { return Some(None) };
-        // Its timer is the runtime's.
-        let _context = runtime().enter();
-        match hyper::body::Body::poll_frame(Pin::new(body), &mut Context::from_waker(std::task::Waker::noop())) {
-            Poll::Ready(frame) => Some(frame),
-            Poll::Pending => None,
+    }
+
+    fn clear_body(&mut self) {
+        match &mut self.slot {
+            BodySlot::Direct(body) => *body = None,
+            BodySlot::Shared(shared) => lock(shared).0 = None,
         }
     }
 }
@@ -1416,7 +1551,7 @@ impl Host for RequestBody {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
         while self.chunk.is_empty() {
             let Some(frame) = self.frame() else {
-                self.waiting = true;
+                self.waiting = self.gave_up.is_none();
                 return Err(self.gave_up.unwrap_or(std::io::ErrorKind::WouldBlock).into());
             };
             match frame {
@@ -1426,11 +1561,11 @@ impl Host for RequestBody {
                     }
                 }
                 Some(Err(error)) => {
-                    note_exceeded(error.as_ref(), &self.exceeded);
+                    note_exceeded(error.as_ref(), &self.answering.exceeded);
                     return Err(std::io::Error::other(error));
                 }
                 None => {
-                    *lock(&self.body) = None;
+                    self.clear_body();
                     return Ok(0);
                 }
             }
@@ -1442,31 +1577,49 @@ impl Host for RequestBody {
     }
 
     fn left(&self) -> Option<usize> {
-        let came = match &*lock(&self.came) {
-            Some(Some(Ok(frame))) => frame.data_ref().map_or(0, Bytes::len),
-            _ => 0,
+        let rest_of = |body: &Option<http_body_util::Limited<Idle>>| -> Option<usize> {
+            let rest = match body {
+                Some(body) if hyper::body::Body::is_end_stream(body) => 0,
+                Some(body) => hyper::body::Body::size_hint(body).exact().filter(|&rest| rest > 0)?,
+                None => 0,
+            };
+            usize::try_from(rest).ok()
         };
-        // Past its limit, the body says it has as much left as the limit
-        // lets in, and none once read: known only at its end.
-        let rest = match &*lock(&self.body) {
-            Some(body) if hyper::body::Body::is_end_stream(body) => 0,
-            Some(body) => hyper::body::Body::size_hint(body).exact().filter(|&rest| rest > 0)?,
-            None => 0,
+        let rest = match &self.slot {
+            BodySlot::Direct(body) => rest_of(body)?,
+            BodySlot::Shared(shared) => {
+                let state = lock(shared);
+                let came = match &state.1 {
+                    Some(Some(Ok(frame))) => frame.data_ref().map_or(0, Bytes::len),
+                    _ => 0,
+                };
+                came + rest_of(&state.0)?
+            }
         };
-        Some(self.chunk.len() + came + usize::try_from(rest).ok()?)
+        Some(self.chunk.len() + rest)
     }
 
     fn blocked(&mut self) -> Option<crate::io::Ready> {
         if !std::mem::take(&mut self.waiting) {
             return None;
         }
-        let (body, came) = (self.body.clone(), self.came.clone());
+        let shared = match &mut self.slot {
+            BodySlot::Shared(shared) => shared.clone(),
+            BodySlot::Direct(body) => {
+                let shared = Arc::new(Mutex::new((body.take(), None)));
+                self.slot = BodySlot::Shared(shared.clone());
+                shared
+            }
+        };
         Some(crate::io::Ready::Other(Box::pin(std::future::poll_fn(move |context| {
-            let mut body = lock(&body);
-            let Some(body) = body.as_mut() else { return Poll::Ready(()) };
+            let mut state = lock(&shared);
+            if state.1.is_some() {
+                return Poll::Ready(());
+            }
+            let Some(body) = state.0.as_mut() else { return Poll::Ready(()) };
             match hyper::body::Body::poll_frame(Pin::new(body), context) {
                 Poll::Ready(frame) => {
-                    *lock(&came) = Some(frame);
+                    state.1 = Some(frame);
                     Poll::Ready(())
                 }
                 Poll::Pending => Poll::Pending,
@@ -1508,13 +1661,13 @@ pub extern "C" fn tondo_rt_http_request_limit_of(object: *mut NativeObject) -> i
 /// Whether a reading of the body went past its limit.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_exceeded(object: *mut NativeObject) -> u8 {
-    request(object).exceeded.load(std::sync::atomic::Ordering::Acquire) as u8
+    request(object).answering.exceeded.load(std::sync::atomic::Ordering::Acquire) as u8
 }
 
 /// Whether the body stopped arriving for longer than the server allows.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_stalled(object: *mut NativeObject) -> u8 {
-    request(object).stalled.load(std::sync::atomic::Ordering::Acquire) as u8
+    request(object).answering.stalled.load(std::sync::atomic::Ordering::Acquire) as u8
 }
 
 /// The body as a stream of `std.io`; an empty one once taken.
@@ -1522,10 +1675,9 @@ pub extern "C" fn tondo_rt_http_request_stalled(object: *mut NativeObject) -> u8
 pub extern "C" fn tondo_rt_http_request_body(object: *mut NativeObject) -> *mut StreamObject {
     let r = request(object);
     let body = RequestBody {
-        body: Arc::new(Mutex::new(r.take_body())),
-        came: Arc::default(),
+        slot: BodySlot::Direct(r.take_body()),
         chunk: Bytes::new(),
-        exceeded: r.exceeded.clone(),
+        answering: r.answering.clone(),
         waiting: false,
         gave_up: None,
     };
@@ -1562,7 +1714,9 @@ pub extern "C" fn tondo_rt_http_respond(
     headers: *mut ArrayHeader,
     data: *mut ArrayHeader,
 ) {
-    request(object).send(response(status, &strings(headers), full(unsafe { array_items::<u8>(data) }.to_vec())));
+    let bytes = unsafe { array_items::<u8>(data) };
+    let body = if bytes.is_empty() { Body::Empty } else { full(Bytes::copy_from_slice(bytes)) };
+    request(object).send(response_from_array(status, headers, body));
 }
 
 /// Responds with a text, which the body reads where it is, without a copy.
@@ -1573,9 +1727,16 @@ pub unsafe extern "C" fn tondo_rt_http_respond_text(
     headers: *mut ArrayHeader,
     text: *mut Str,
 ) {
-    unsafe { super::strings::tondo_rt_str_retain(text) };
-    let body = full(Bytes::from_owner(Held(text)));
-    request(object).send(response(status, &strings(headers), body));
+    let body = if super::strings::short(text) {
+        let bytes = unsafe { super::strings::str_bytes(&text) };
+        if bytes.is_empty() { Body::Empty } else { full(Bytes::copy_from_slice(bytes)) }
+    } else if unsafe { (*text).len == 0 } {
+        Body::Empty
+    } else {
+        unsafe { super::strings::tondo_rt_str_retain(text) };
+        full(Bytes::from_owner(Held(text)))
+    };
+    request(object).send(response_from_array(status, headers, body));
 }
 
 /// A text of the program that a reply's body reads where it is, held until
@@ -1608,7 +1769,11 @@ pub unsafe extern "C" fn tondo_rt_http_respond_stream(
     use futures_util::StreamExt;
     unsafe { super::tasks::tondo_rt_handle_retain(input as *mut u8) };
     let frames = stream_of(Source(input)).map(|chunk| chunk.map(Frame::data));
-    request(object).send(response(status, &strings(headers), BodyExt::boxed_unsync(StreamBody::new(frames))));
+    request(object).send(response_from_array(
+        status,
+        headers,
+        Body::Stream(BodyExt::boxed_unsync(StreamBody::new(frames))),
+    ));
 }
 
 /// The trailers of a reply, which its handler gives before the reply's
@@ -1670,10 +1835,10 @@ pub unsafe extern "C" fn tondo_rt_http_respond_trailed(
         }
         Ok(Frame::trailers(map))
     });
-    request(object).send(response(
+    request(object).send(response_from_array(
         status,
-        &strings(headers),
-        BodyExt::boxed_unsync(StreamBody::new(frames.chain(last))),
+        headers,
+        Body::Stream(BodyExt::boxed_unsync(StreamBody::new(frames.chain(last)))),
     ));
 }
 
@@ -1781,7 +1946,7 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
                 Err(error) => Some((Err(error), (file, 0, 0))),
             }
         });
-        BodyExt::boxed_unsync(StreamBody::new(chunks))
+        Body::Stream(BodyExt::boxed_unsync(StreamBody::new(chunks)))
     });
     crate::strings::str_in(region, b"")
 }
@@ -1863,7 +2028,7 @@ fn respond_entity(r: &Request, mut extra: Vec<String>, entity: Entity, body: imp
         extra.extend(["last-modified".into(), last_modified.clone()]);
     }
     if unchanged {
-        r.send(response(304, &extra, full(Bytes::new())));
+        r.send(response(304, &extra, Body::Empty));
         return;
     }
     // A range holds only while the file is the one `If-Range` names.
@@ -1872,7 +2037,7 @@ fn respond_entity(r: &Request, mut extra: Vec<String>, entity: Entity, body: imp
         Some(Ok(Some((first, last)))) => (206, first, last),
         Some(Err(())) => {
             extra.extend(["content-range".into(), format!("bytes */{length}")]);
-            r.send(response(416, &extra, full(Bytes::new())));
+            r.send(response(416, &extra, Body::Empty));
             return;
         }
         _ => (200, 0, length.saturating_sub(1)),
@@ -1883,7 +2048,7 @@ fn respond_entity(r: &Request, mut extra: Vec<String>, entity: Entity, body: imp
         extra.extend(["content-range".into(), format!("bytes {first}-{last}/{length}")]);
     }
     if r.method == hyper::Method::HEAD || size == 0 {
-        r.send(response(status, &extra, full(Bytes::new())));
+        r.send(response(status, &extra, Body::Empty));
         return;
     }
     r.send(response(status, &extra, body(first, size)));
@@ -1895,7 +2060,7 @@ fn respond_entity(r: &Request, mut extra: Vec<String>, entity: Entity, body: imp
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_http_save_body(object: *mut NativeObject, path: *const Str, offset: i64) -> i64 {
     let r = request(object);
-    let (path, body, exceeded) = (text(path), r.take_body(), r.exceeded.clone());
+    let (path, body, answering) = (text(path), r.take_body(), r.answering.clone());
     let saved = wait(async move {
         let offset = u64::try_from(offset).unwrap_or(0);
         let opened = blocking(false, move || -> std::io::Result<_> {
@@ -1919,7 +2084,7 @@ pub unsafe extern "C" fn tondo_rt_http_save_body(object: *mut NativeObject, path
         if let Some(mut body) = body {
             while let Some(frame) = body.frame().await {
                 let frame = frame.map_err(|error| {
-                    note_exceeded(error.as_ref(), &exceeded);
+                    note_exceeded(error.as_ref(), &answering.exceeded);
                     std::io::Error::other(error)
                 })?;
                 if let Ok(data) = frame.into_data() {
@@ -1998,9 +2163,9 @@ pub extern "C" fn tondo_rt_http_request_form(object: *mut NativeObject) -> *mut 
     let body = r.take_body();
     match (boundary, body) {
         (Some(Ok(boundary)), Some(body)) => {
-            let exceeded = r.exceeded.clone();
+            let answering = r.answering.clone();
             let body = body.map_err(move |error| {
-                note_exceeded(error.as_ref(), &exceeded);
+                note_exceeded(error.as_ref(), &answering.exceeded);
                 error
             });
             let stream = http_body_util::BodyDataStream::new(body);

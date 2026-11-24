@@ -584,8 +584,17 @@ pub(crate) fn set_own_labels(set: u32) {
 
 /// The bounds of the running task's stack, above its guard: the thread's
 /// own for a call of C's that runs there.
+/// Records the current OS thread's stack bounds once so sampling and stack
+/// walks outside a Tondo task (e.g. `turn_host` or HTTP runtime threads) can
+/// unwind the thread stack without allocating during sampling.
+pub(crate) fn find_thread_stack() {
+    kept().find_stack();
+}
+
 pub(crate) fn stack_bounds() -> Option<(usize, usize)> {
-    let task = unsafe { current().as_ref()? };
+    let Some(task) = (unsafe { current().as_ref() }) else {
+        return thread_stack();
+    };
     if task.native {
         return thread_stack();
     }

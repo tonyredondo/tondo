@@ -81,7 +81,9 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
 /// `work_until`, by a worker that `beside` says the monitor put beside a
 /// held one, and that `seeks` the tasks of a domain from its start.
 fn work_from(main: bool, until: Option<&dyn Fn() -> bool>, beside: bool, seeks: Option<usize>) -> i32 {
-    crate::trace::guard_thread(true, kept());
+    let kept = kept();
+    kept.find_stack();
+    crate::trace::guard_thread(true, kept);
     if exploring().is_none()
         && own_next().is_none()
         && let Some(next) = NEXTS.get(NEXT_COUNT.fetch_add(1, Ordering::AcqRel))

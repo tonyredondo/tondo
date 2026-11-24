@@ -502,7 +502,10 @@ pub unsafe extern "C" fn tondo_rt_join_cancel(join: *mut JoinObject) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_handle_retain(handle: *mut u8) {
     if !handle.is_null() {
-        unsafe { (*(handle as *const AtomicUsize)).fetch_add(1, Ordering::Relaxed) };
+        let rc = unsafe { &*(handle as *const AtomicUsize) };
+        if rc.load(Ordering::Relaxed) != crate::strings::IMMORTAL {
+            rc.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

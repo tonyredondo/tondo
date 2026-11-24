@@ -564,20 +564,22 @@ pub fn Client.request(
         some(limit) => limit.milliseconds()
         none => 0
     }
+    let request = ClientRequest {
+        method: method
+        url: withQuery(joined(self.base, url), query)
+        headers: all
+        body: body
+    }
+    if self.hooks.isEmpty() {
+        return deliver(self.native, request, limit, self.most)?
+    }
     let (connection, most) = (self.native, self.most)
-    var outgoing: fn(ClientRequest): Response ! HttpError = request =>
-        deliver(connection, request, limit, most)?
+    var outgoing: fn(ClientRequest): Response ! HttpError = current =>
+        deliver(connection, current, limit, most)?
     for hook in self.hooks.reversed() {
         outgoing = hooked(hook, outgoing)
     }
-    outgoing(
-        ClientRequest {
-            method: method
-            url: withQuery(joined(self.base, url), query)
-            headers: all
-            body: body
-        },
-    )?
+    outgoing(request)?
 }
 
 /// Adds a hook around each request of the client, as middleware is around

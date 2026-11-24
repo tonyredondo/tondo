@@ -13,7 +13,73 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// A body as hyper sends it.
-pub(crate) type Outgoing = http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>;
+pub(crate) enum Outgoing {
+    Empty,
+    Full(Option<Bytes>),
+    Stream(http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>),
+}
+
+impl hyper::body::Body for Outgoing {
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, std::io::Error>>> {
+        match self.get_mut() {
+            Outgoing::Empty => std::task::Poll::Ready(None),
+            Outgoing::Full(bytes) => {
+                std::task::Poll::Ready(bytes.take().filter(|b| !b.is_empty()).map(|b| Ok(hyper::body::Frame::data(b))))
+            }
+            Outgoing::Stream(stream) => std::pin::Pin::new(stream).poll_frame(cx),
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        match self {
+            Outgoing::Empty => true,
+            Outgoing::Full(bytes) => bytes.as_ref().is_none_or(Bytes::is_empty),
+            Outgoing::Stream(stream) => stream.is_end_stream(),
+        }
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        match self {
+            Outgoing::Empty => hyper::body::SizeHint::with_exact(0),
+            Outgoing::Full(bytes) => hyper::body::SizeHint::with_exact(bytes.as_ref().map_or(0, Bytes::len) as u64),
+            Outgoing::Stream(stream) => stream.size_hint(),
+        }
+    }
+}
+
+/// Static header value when `bytes` matches a common fixed value.
+pub(crate) fn static_header_value(bytes: &[u8]) -> Option<hyper::header::HeaderValue> {
+    const AGENT: &str = concat!("tondo/", env!("CARGO_PKG_VERSION"));
+    let text = match bytes.len() {
+        5 if bytes == b"bytes" => "bytes",
+        8 if bytes == b"no-cache" => "no-cache",
+        16 if bytes == b"application/json" => "application/json",
+        16 if bytes == b"gzip, deflate, br" => "gzip, deflate, br",
+        17 if bytes == b"text/event-stream" => "text/event-stream",
+        24 if bytes == b"text/html; charset=utf-8" => "text/html; charset=utf-8",
+        24 if bytes == b"application/octet-stream" => "application/octet-stream",
+        24 if bytes == b"application/problem+json" => "application/problem+json",
+        25 if bytes == b"text/plain; charset=utf-8" => "text/plain; charset=utf-8",
+        33 if bytes == b"application/x-www-form-urlencoded" => "application/x-www-form-urlencoded",
+        n if n == AGENT.len() && bytes == AGENT.as_bytes() => AGENT,
+        _ => return None,
+    };
+    Some(hyper::header::HeaderValue::from_static(text))
+}
+
+/// Static header values for common headers, avoiding a heap copy on each request.
+pub(crate) fn header_value(value: &str) -> Result<hyper::header::HeaderValue, hyper::header::InvalidHeaderValue> {
+    if let Some(kept) = static_header_value(value.as_bytes()) {
+        return Ok(kept);
+    }
+    hyper::header::HeaderValue::try_from(value)
+}
 
 /// A connection either way, as TLS and hyper read and write it.
 trait Duplex: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static {}
@@ -99,16 +165,16 @@ impl Proxies {
     /// The proxy for a URL, unless `NO_PROXY` names its host: the host
     /// itself, a domain it ends in, or `*`.
     fn of(&self, secure: bool, host: &str) -> Option<&Proxy> {
+        let proxy = if secure { self.https.as_ref() } else { self.http.as_ref() }?;
+        if self.bypass.is_empty() {
+            return Some(proxy);
+        }
         let host = host.trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
         let bypassed = self.bypass.iter().any(|entry| {
             let entry = entry.trim_start_matches('.');
             entry == "*" || host == entry || host.ends_with(&format!(".{entry}"))
         });
-        match (bypassed, secure) {
-            (true, _) => None,
-            (false, true) => self.https.as_ref(),
-            (false, false) => self.http.as_ref(),
-        }
+        (!bypassed).then_some(proxy)
     }
 }
 
@@ -288,6 +354,12 @@ impl Client {
     /// Keeps a connection of HTTP/1 its request let go, for the next.
     fn keep(&self, route: &Route, sender: Sender) {
         let mut idle = self.idle.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(kept) = idle.get_mut(route) {
+            if kept.len() < IDLE {
+                kept.push(sender);
+            }
+            return;
+        }
         let kept = idle.entry(route.clone()).or_default();
         if kept.len() < IDLE {
             kept.push(sender);
@@ -403,13 +475,13 @@ async fn two(io: Box<dyn Duplex>) -> Result<Sender, Failure> {
 }
 
 pub(crate) fn empty() -> Outgoing {
-    http_body_util::Empty::new().map_err(|never| match never {}).boxed_unsync()
+    Outgoing::Empty
 }
 
 /// What a request sends: its method, URL, headers and body.
 pub(crate) struct Request {
     pub(crate) method: hyper::Method,
-    pub(crate) url: String,
+    pub(crate) url: url::Url,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) body: Body,
     pub(crate) timeout: Option<Duration>,
@@ -459,8 +531,7 @@ impl Client {
     }
 
     async fn follow(&self, request: Request, deadline: Option<Instant>) -> Result<Answer, Failure> {
-        let Request { mut method, url, mut headers, mut body, .. } = request;
-        let mut url = url::Url::parse(&url).map_err(|error| failed("url", format!("{url}: {error}")))?;
+        let Request { mut method, mut url, mut headers, mut body, .. } = request;
         let mut hops = 0;
         loop {
             // A body sent once is gone: bytes go again, a stream does not.
@@ -469,10 +540,14 @@ impl Client {
                 Body::Bytes(data, kind) => Some(Body::Bytes(data.clone(), kind.clone())),
                 _ => None,
             };
-            let answer = self.exchange(&method, &url, &headers, body, deadline).await?;
+            let mut answer = self.exchange(&method, &url, &headers, body, deadline).await?;
             let location = answer.headers.get(hyper::header::LOCATION).and_then(|value| value.to_str().ok());
-            let (Some(keeps), Some(location)) = (redirects(answer.status), location) else { return Ok(answer) };
+            let (Some(keeps), Some(location)) = (redirects(answer.status), location) else {
+                answer.url = url.into();
+                return Ok(answer);
+            };
             if self.redirects == 0 {
+                answer.url = url.into();
                 return Ok(answer);
             }
             if hops == self.redirects {
@@ -488,7 +563,10 @@ impl Client {
             }
             body = match (keeps, again) {
                 (true, Some(again)) => again,
-                (true, None) => return Ok(answer),
+                (true, None) => {
+                    answer.url = url.into();
+                    return Ok(answer);
+                }
                 (false, _) => {
                     if method != hyper::Method::HEAD {
                         method = hyper::Method::GET;
@@ -526,24 +604,38 @@ impl Client {
             (None, Some(proxy)) => Via::Forward(proxy.clone()),
             (None, None) => Via::Direct,
         };
-        let route = Route { secure, host: host.clone(), port, via };
+        let route = Route { secure, host, port, via };
         let mut sender = self.sender(&route).await?;
         let two = matches!(sender.half, Half::Two(_));
         // HTTP/2 names the origin in the URI; HTTP/1 in `Host`, and a
         // proxy that forwards takes the whole URL.
-        let target = match (&route.via, two) {
-            (Via::Forward(_), _) | (_, true) => url.as_str().to_string(),
+        let uri = match (&route.via, two) {
+            (Via::Forward(_), _) | (_, true) => hyper::Uri::try_from(url.as_str()),
             _ => match url.query() {
-                Some(query) => format!("{}?{query}", url.path()),
-                None => url.path().to_string(),
+                Some(query) => hyper::Uri::try_from(format!("{}?{query}", url.path())),
+                None => hyper::Uri::try_from(url.path()),
             },
-        };
-        let mut builder = hyper::Request::builder().method(method.clone()).uri(target);
+        }
+        .map_err(|error| failed("url", with_causes(&error)))?;
+        let mut builder = hyper::Request::builder().method(method.clone()).uri(uri);
         let has = |name: &str| headers.iter().any(|(given, _)| given.eq_ignore_ascii_case(name));
         if !two {
             let authority = match url.port() {
-                Some(port) => format!("{host}:{port}"),
-                None => host.clone(),
+                Some(port) => {
+                    use std::io::Write;
+                    let mut stack = [0u8; 256];
+                    let mut cursor = std::io::Cursor::new(&mut stack[..]);
+                    if write!(cursor, "{}:{port}", route.host).is_ok() {
+                        let len = cursor.position() as usize;
+                        hyper::header::HeaderValue::from_bytes(&stack[..len])
+                            .map_err(|error| failed("url", with_causes(&error)))?
+                    } else {
+                        hyper::header::HeaderValue::try_from(format!("{}:{port}", route.host))
+                            .map_err(|error| failed("url", with_causes(&error)))?
+                    }
+                }
+                None => hyper::header::HeaderValue::try_from(route.host.as_str())
+                    .map_err(|error| failed("url", with_causes(&error)))?,
             };
             builder = builder.header(hyper::header::HOST, authority);
         }
@@ -551,12 +643,16 @@ impl Client {
             builder = builder.header("proxy-authorization", authorization);
         }
         if !has("user-agent") {
-            builder = builder.header(hyper::header::USER_AGENT, concat!("tondo/", env!("CARGO_PKG_VERSION")));
+            builder = builder.header(
+                hyper::header::USER_AGENT,
+                hyper::header::HeaderValue::from_static(concat!("tondo/", env!("CARGO_PKG_VERSION"))),
+            );
         }
         // What this client decodes, unless the program asks for another.
         let decodes = !has("accept-encoding");
         if decodes {
-            builder = builder.header(hyper::header::ACCEPT_ENCODING, "gzip, deflate, br");
+            builder = builder
+                .header(hyper::header::ACCEPT_ENCODING, hyper::header::HeaderValue::from_static("gzip, deflate, br"));
         }
         if let Some(cookies) = &self.cookies
             && !has("cookie")
@@ -569,17 +665,16 @@ impl Client {
             }
         }
         for (name, value) in headers {
-            builder = builder.header(name.as_str(), value.as_str());
+            match (hyper::header::HeaderName::try_from(name.as_str()), header_value(value.as_str())) {
+                (Ok(name), Ok(value)) => builder = builder.header(name, value),
+                _ => builder = builder.header(name.as_str(), value.as_str()),
+            }
         }
         let (outgoing, length, kind) = match body {
-            Body::Empty => (empty(), None, None),
+            Body::Empty => (Outgoing::Empty, None, None),
             Body::Bytes(data, kind) => {
                 let length = data.len() as u64;
-                (
-                    http_body_util::Full::new(data).map_err(|never| match never {}).boxed_unsync(),
-                    Some(length),
-                    Some(kind),
-                )
+                (Outgoing::Full(Some(data)), Some(length), Some(kind))
             }
             Body::Stream(stream, length, kind) => (stream, length, Some(kind)),
             Body::Form(form) => {
@@ -588,7 +683,10 @@ impl Client {
             }
         };
         if let Some(kind) = kind.filter(|kind| !kind.is_empty() && !has("content-type")) {
-            builder = builder.header(hyper::header::CONTENT_TYPE, kind);
+            match header_value(&kind) {
+                Ok(value) => builder = builder.header(hyper::header::CONTENT_TYPE, value),
+                Err(_) => builder = builder.header(hyper::header::CONTENT_TYPE, kind),
+            }
         }
         if let Some(length) = length.filter(|_| !has("content-length")) {
             builder = builder.header(hyper::header::CONTENT_LENGTH, length);
@@ -622,9 +720,9 @@ impl Client {
         Ok(Answer {
             status: parts.status,
             version: parts.version,
-            url: url.to_string(),
+            url: String::new(),
             headers: parts.headers,
-            body: Received { incoming: Some(incoming), decoder, deadline, connection, room: PASSED - 1 },
+            body: Received { incoming: Some(incoming), decoder, deadline, sleep: None, connection, room: PASSED - 1 },
         })
     }
 }
@@ -635,6 +733,7 @@ pub(crate) struct Received {
     incoming: Option<hyper::body::Incoming>,
     decoder: Option<Box<Decoder>>,
     deadline: Option<Instant>,
+    sleep: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
     connection: Arc<crate::server::Turning>,
     /// How many more bytes the body may give once decoded, of the bound its
     /// reader gives (`ClientLimits.maxBodyBytes`, or `Response.limitBody`'s),
@@ -679,19 +778,41 @@ impl Received {
         if failure.0 == "too large" { self.past() } else { failure }
     }
 
-    /// The next chunk, or none once it ended.
-    pub(crate) async fn chunk(&mut self) -> Result<Option<Bytes>, Failure> {
+    /// Whether reading this body has a request deadline (and thus may create a
+    /// tokio timer when waiting).
+    pub(crate) fn has_deadline(&self) -> bool {
+        self.deadline.is_some()
+    }
+
+    /// Polls for the next chunk, driving the connection in place.
+    pub(crate) fn poll_chunk(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<Option<Bytes>, Failure>> {
+        use std::future::Future;
+        use std::task::Poll;
         if self.passed() {
-            return Err(failed("too large", ""));
+            return Poll::Ready(Err(failed("too large", "")));
         }
         loop {
-            let Some(incoming) = self.incoming.as_mut() else { return Ok(None) };
-            let next = driven(&self.connection, incoming.frame());
-            let frame = match self.deadline {
-                Some(deadline) => tokio::time::timeout_at(deadline.into(), next)
-                    .await
-                    .map_err(|_| failed("timeout", "the request timed out"))?,
-                None => next.await,
+            let Some(incoming) = self.incoming.as_mut() else { return Poll::Ready(Ok(None)) };
+            self.connection.run();
+            let frame = match hyper::body::Body::poll_frame(std::pin::Pin::new(incoming), cx) {
+                Poll::Ready(frame) => {
+                    self.sleep = None;
+                    frame
+                }
+                Poll::Pending => {
+                    if let Some(deadline) = self.deadline {
+                        let sleep =
+                            self.sleep.get_or_insert_with(|| Box::pin(tokio::time::sleep_until(deadline.into())));
+                        if sleep.as_mut().poll(cx).is_ready() {
+                            self.sleep = None;
+                            return Poll::Ready(Err(failed("timeout", "the request timed out")));
+                        }
+                    }
+                    return Poll::Pending;
+                }
             };
             let data = match frame {
                 Some(Ok(frame)) => match frame.into_data() {
@@ -699,24 +820,38 @@ impl Received {
                     // Trailers.
                     Err(_) => continue,
                 },
-                Some(Err(error)) => return Err(failed("body", with_causes(&error))),
+                Some(Err(error)) => return Poll::Ready(Err(failed("body", with_causes(&error)))),
                 None => {
                     self.incoming = None;
-                    let Some(decoder) = self.decoder.take() else { return Ok(None) };
-                    let rest = decoder.finish(self.room).map_err(|f| self.refused(f))?;
-                    return Ok(Some(self.counted(rest)?).filter(|rest| !rest.is_empty()));
+                    let Some(decoder) = self.decoder.take() else { return Poll::Ready(Ok(None)) };
+                    let rest = match decoder.finish(self.room) {
+                        Ok(rest) => rest,
+                        Err(f) => return Poll::Ready(Err(self.refused(f))),
+                    };
+                    return Poll::Ready(match self.counted(rest) {
+                        Ok(rest) => Ok(Some(rest).filter(|rest| !rest.is_empty())),
+                        Err(e) => Err(e),
+                    });
                 }
             };
             let room = self.room;
             let decoded = match &mut self.decoder {
-                None => return self.counted(data).map(Some),
+                None => return Poll::Ready(self.counted(data).map(Some)),
                 Some(decoder) => decoder.feed(&data, room),
             };
-            let decoded = decoded.map_err(|f| self.refused(f))?;
+            let decoded = match decoded {
+                Ok(decoded) => decoded,
+                Err(f) => return Poll::Ready(Err(self.refused(f))),
+            };
             if !decoded.is_empty() {
-                return self.counted(decoded).map(Some);
+                return Poll::Ready(self.counted(decoded).map(Some));
             }
         }
+    }
+
+    /// The next chunk, or none once it ended.
+    pub(crate) async fn chunk(&mut self) -> Result<Option<Bytes>, Failure> {
+        std::future::poll_fn(|cx| self.poll_chunk(cx)).await
     }
 
     /// How many bytes of the body are still to come, when its length is
@@ -731,7 +866,11 @@ impl Received {
 
     /// The whole body.
     pub(crate) async fn all(mut self) -> Result<Bytes, Failure> {
-        let mut whole = bytes::BytesMut::new();
+        let Some(first) = self.chunk().await? else { return Ok(Bytes::new()) };
+        let Some(second) = self.chunk().await? else { return Ok(first) };
+        let mut whole = bytes::BytesMut::with_capacity(first.len() + second.len());
+        whole.extend_from_slice(&first);
+        whole.extend_from_slice(&second);
         while let Some(chunk) = self.chunk().await? {
             whole.extend_from_slice(&chunk);
         }
@@ -836,7 +975,7 @@ type Chunks = std::pin::Pin<Box<dyn futures_util::Stream<Item = std::io::Result<
 /// A body read from chunks as it is sent.
 pub(crate) fn streamed(chunks: impl futures_util::Stream<Item = std::io::Result<Bytes>> + Send + 'static) -> Outgoing {
     use futures_util::TryStreamExt;
-    http_body_util::StreamBody::new(chunks.map_ok(hyper::body::Frame::data)).boxed_unsync()
+    Outgoing::Stream(http_body_util::StreamBody::new(chunks.map_ok(hyper::body::Frame::data)).boxed_unsync())
 }
 
 /// A multipart form (RFC 7578), its parts in order.
