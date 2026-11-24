@@ -3058,9 +3058,10 @@ fn counts_both(name: &str, tests: &str) -> (Counts, Counts) {
     (counts(&[]), counts(&["--no-lifetimes"]))
 }
 
-/// A text with nothing to trim comes back as it is, without a copy, and
-/// one with whitespace at an end is copied, when what is left is longer
-/// than a short text (tests/cases/run/trim_ends.to).
+/// A text with nothing to trim comes back as it is, without a copy; one with
+/// whitespace at an end is copied when the trimmed text itself is used and is
+/// longer than a short text (tests/cases/run/trim_ends.to), whereas reading
+/// only `byteLength()` folds to `end - start` and allocates nothing.
 #[test]
 fn trimming_nothing_allocates_nothing() {
     let tests = "\
@@ -3072,9 +3073,18 @@ test counted {
     let padded = (0..100).map((n) { \" a word {n} \" }).collect()
     console.println(\"same {testing.allocations(() { trimmed(words) })}\")
     console.println(\"padded {testing.allocations(() { trimmed(padded) })}\")
+    console.println(\"paddedRead {testing.allocations(() { trimmedBytes(padded) })}\")
 }
 
 fn trimmed(texts: Array[String]): Int {
+    var total = 0
+    for text in texts {
+        total += text.trim().length() + text.trimStart().length() + text.trimEnd().length()
+    }
+    total
+}
+
+fn trimmedBytes(texts: Array[String]): Int {
     var total = 0
     for text in texts {
         total += text.trim().byteLength() + text.trimStart().byteLength() + text.trimEnd().byteLength()
@@ -3083,7 +3093,7 @@ fn trimmed(texts: Array[String]): Int {
 }
 ";
     let counts = counts_of("trimmed_counted", tests);
-    assert_eq!(counts, [("same".to_string(), 0), ("padded".to_string(), 300)]);
+    assert_eq!(counts, [("same".to_string(), 0), ("padded".to_string(), 300), ("paddedRead".to_string(), 0)]);
 }
 
 /// A text of up to seven bytes is held in its word and allocates nothing,

@@ -10076,3 +10076,43 @@ side alone. Six of the twelve programs are smaller, by up to 0.21%,
 and none is larger. Compiling is the same: no row of `bench/compile.to
 --old` moved by more than 5%, the most being `server`'s build, 1.4% more
 instructions, and `--guard` passes.
+
+## Weighing calls past 31 by trial, and `trim` in Tondo
+
+Calls above `SMALL` (31) are now weighed once after `inline_small` by a bounded
+trial pass (`inline_by_trial`, ceiling `TRIAL_CEILING = 140`, per-caller growth
+cap `CALLER_GROWTH_MAX = 512`), rather than raising `SMALL` globally. Because
+it runs after `inline_small`, closure specialization and `call_bodies` have
+already devirtualized iterator adapters, avoiding the regressions seen when
+`SMALL` was raised globally (`maxBy 10000` +15.5% instructions, code bloat up
+to +227%).
+
+Each candidate callee is evaluated lazily (`OnceLock`) in an O(callee)
+synthetic wrapper carrying only the call site's known constant/variant
+arguments and immediate result consumer (`byteLength` or `Discriminant`), then
+simplified with `elide`, `thread`, `fold_between_byte_length`, and
+`drop_dead_pure`. A call site is accepted only when the trial proves a concrete
+win: shrinking to `<= 31`, dropping an allocation or indirect call, unlocking a
+caller/loop region for a flow-sensitive mixed-return (`param` + fresh `alloc`)
+callee whose result does not escape the caller's return, or folding away at
+least 25% and 12 statements.
+
+With this in place, whitespace trimming (`trim`, `trimStart`, `trimEnd`) is
+written in Tondo (`prelude.trimWhitespace`), scanning ASCII whitespace with
+`textNative.byteAt` (which `prove` lowers to unchecked `byteWithin`), falling
+back to the runtime only at the first non-ASCII byte, and slicing proven
+in-bounds character boundaries with internal `textNative.betweenWithin`. Right
+after `thread`, `elide::fold_between_byte_length` folds `byteLength()` of a
+`betweenWithin(s, start, end)` slice to `end - start` and drops the slice and
+its release when nothing else reads the trimmed string.
+
+Measured on Linux x86-64 (Ryzen 9 5950X) against `0744a387` (`perf-quick-wins`)
+over all 75 rows of `bench/tondo` with `--regression-by instructions
+--max-regression 2`: zero instruction regressions across all 75 rows;
+`texts/trim read` drops from `13.62 ns` (`332 ins`, 1 region alloc / 80 B) to
+`6.57–7.41 ns` across 5 layouts (`139–141 ins`, −57.5% ins, −46% time, 0 B / 0
+allocs); `texts/trim` drops from `13.45 ns` (`325 ins`) to `12.06–12.65 ns`
+(`261–264 ins`, −18.8% ins, still 1 region alloc / 80 B); `http/*` drops
+0.1–0.2% instructions from unlocking regions in `http.Client.request`; and
+real example binaries grow by 0.00% to 0.97%. Closing the remaining gap on
+`texts/trim` against Go (`4.37 ns`, 0 B) still depends on zero-copy text views.

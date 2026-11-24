@@ -23,7 +23,7 @@ pub fn thread(bodies: &mut [Body], types: &Types) {
     crate::parallel::each_mut(bodies, |body| thread_one(body, types));
 }
 
-fn thread_one(body: &mut Body, types: &Types) {
+pub(crate) fn thread_one(body: &mut Body, types: &Types) {
     {
         // A binding that borrows writes through to what it borrows, which
         // may change under it: it is never known, and always written; nor

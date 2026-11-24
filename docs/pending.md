@@ -35,23 +35,12 @@ before the chain's rest because the chain's adapters wait for it too.
    on 2026-11-23, five tests that fail on x86-64 and two jobs that do not
    fit their time. First because they say whether what is on main is sound,
    and anything they find is fixed before more is built on it.
-2. **`trim`**: the inliner weighing a call by what inlining buys and a
-   region for the copy, which the plain form in Tondo, measured again,
-   waits for; then the list of what stays behind Go. Second because its rows
-   are the furthest behind, and the inliner's weighing is a piece many other
-   calls wait for. The weighing is by trial, as the maintainer asked on
-   2026-11-23: the budget is a ceiling, a call past today's 31 is opened
-   and kept only where the passes after it make something of it, and left
-   as it was where they do not. Where it stands: the design is written and
-   a first build exists, on main as it was before 2026-11-23's changes;
-   its first numbers were void, read beside a change to `thread` that
-   compiled wrongly. Next, in this order: the benchmark's own loop given
-   back its code and `thread` following copies pushed (Owed now), then the
-   trial carried onto main with both and with `prove`'s mend in, and
-   measured. These measures hold this machine for hours and do not wait
-   for step 1's jobs under emulation, whose work is done on the runners
-   beside them; a fault found there in code a release program runs goes
-   ahead of them.
+2. **`trim` and trial inlining**: the bounded trial inliner (`inline_by_trial`),
+   `prelude.trimWhitespace` in Tondo, and `fold_between_byte_length` landed on
+   `b3-trial-inline-trim` (`texts/trim read` −57.5% ins / 0 allocs; `texts/trim`
+   −18.8% ins; zero instruction regressions across all 75 rows, binary growth
+   <= 0.97%). Closing the remaining copy cost on `texts/trim` vs Go waits for
+   step 5 (views of texts).
 3. **The chain's rest**: the loop's fast arm after its branch, which is
    also what the chars rows lack, and the reads of the task's attention.
    Then a new table against Go, at the baseline and at x86-64-v3. Here

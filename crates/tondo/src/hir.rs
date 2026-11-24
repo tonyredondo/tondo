@@ -1879,6 +1879,9 @@ pub const NATIVES: &[Native] = {
         text("byteWithin", &[String, Int], Int, "tondo_rt_text_byte_at"),
         text("asciiChar", &[Int], Char, "tondo_rt_char_ascii"),
         text("between", &[String, Int, Int], String, "tondo_rt_text_between"),
+        // The same, at byte offsets known to lie on character boundaries within
+        // the text, so `byteLength()` of the result is `end - start`.
+        text("betweenWithin", &[String, Int, Int], String, "tondo_rt_text_between"),
         text("findIn", &[String, String, Int, Int], Int, "tondo_rt_text_find_in"),
         text("template", &[String, Bool], String, "tondo_rt_template_parse"),
         text("terminal", &[Int], Bool, "tondo_rt_console_terminal"),

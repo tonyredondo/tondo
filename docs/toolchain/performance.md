@@ -220,13 +220,19 @@ stats.to:19:5: `"{sensor}: {value:.1}"` is not made in the frame: it is copied (
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
 stats.to:19:5: `"{sensor}: {value:.1}"` goes in a region of `main` (in main)
 stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
-stats.to:19:17: `value` in `formats.formatNumber`, `formatText("{sign}{prefix}{digits}", -1, width, f…` stays a call of `formats.formatText`: its body costs 73, more than the 31 inlining takes; 2 places in it make values in regions of its own and 4 in the region its caller gives (in label)
-stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 70, more than the 31 inlining takes; 6 places in it make values in regions of its own and 6 in the region its caller gives (in main)
-stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{digits}"` is made on the heap: it is passed to a call that may keep it (in label)
+stats.to:19:17: `value` in `formats.formatNumber`, `formatText("{sign}{prefix}{digits}", -1, width, f…` stays a call of `formats.formatText`: its body costs 73, more than the 31 inlining takes; 2 places in it make values in regions of its own and 4 in the region its caller gives (in main)
+stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{digits}"` is made on the heap: it is copied (in label)
 stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{zeros}{digits}"` is made on the heap: something else is assigned to it (in label)
-stats.to:19:17: `value` is inlined: the body of `formats.formatFloat` is copied here (in label)
+stats.to:19:17: `value` in `formats.formatText`, `"{filling.repeat(missing)}{cut}"` is made on the heap: it is copied (in label)
+stats.to:19:17: `value` is inlined: the body of `formats.formatFloat` is copied here (in label, main)
+stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{digits}"` goes in a region of `main` (in main)
 stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{digits}"` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
+stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{zeros}{digits}"` goes in a region of `main` (in main)
 stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{zeros}{digits}"` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
+stats.to:19:17: `value` in `formats.formatText`, `"{cut}{filling.repeat(missing)}"` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
+stats.to:19:17: `value` in `formats.formatText`, `"{filling.repeat(missing / 2)}{cut}{filling.repea…` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
+stats.to:19:17: `value` in `formats.formatText`, `"{filling.repeat(missing)}{cut}"` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
+stats.to:19:17: `value` in `formats.formatText`, `text.slice(0, precision)` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
 stats.to:24:14: `0..1000` runs four turns at a time (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` grows an array that goes in a region of `main` (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` takes room for every turn before the loop (in main)
@@ -338,8 +344,9 @@ was inlined in `main`, which lets go of it, it goes in a region of `main`.
 ```text listing
 $ tondo optimizations stats.to --kind heap
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
-stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{digits}"` is made on the heap: it is passed to a call that may keep it (in label)
+stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{digits}"` is made on the heap: it is copied (in label)
 stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{zeros}{digits}"` is made on the heap: something else is assigned to it (in label)
+stats.to:19:17: `value` in `formats.formatText`, `"{filling.repeat(missing)}{cut}"` is made on the heap: it is copied (in label)
 ```
 
 Only the `label` that stays a function allocates on the heap, its own text
@@ -595,7 +602,7 @@ fn main() {
 
 ```text listing
 $ tondo optimizations squares.to --function byChain --kind call
-squares.to:10:5: `numbers.iter().filter(n => n % 2 == 0).map(n => n * n).sum()` in `Iterator.sum[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int]`, `self.sumBy(item => item)` stays a call of `Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int]`: its body costs 48, more than the 31 inlining takes (in byChain, main)
+squares.to:10:5: `numbers.iter().filter(n => n % 2 == 0).map(n => n * n).sum()` in `Iterator.sum[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int]`, `self.sumBy(item => item)` stays a call of `Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int]`: its body costs 76, more than the 31 inlining takes (in byChain, main)
 squares.to:10:27: `n => n % 2 == 0` is called by its body where a record holds it, as an iterator's adapter does (in prelude.FilterIterator.next[prelude.ArrayIterator[Int], Int])
 squares.to:10:48: `n => n * n` is called by its body where a record holds it, as an iterator's adapter does (in Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int])
 ```
@@ -975,7 +982,8 @@ fn main() {
 $ tondo optimizations line.to --kind region
 line.to:7:9: `line = "{line}[{word}]"` goes in a region of `main` (in main)
 line.to:7:9: `line = "{line}[{word}]"` goes in a region of `width` (in width)
-line.to:16:20: `name.trim()` in `prelude.trimmed`, `textNative.trim(text, "", true, ends)` goes in the region of a turn of the loop at line 15, with room an append grows into (in widest)
+line.to:16:20: `name.trim()` in `prelude.trimUnicode`, `textNative.trim(text, "", true, ends)` goes in the region of a turn of the loop at line 15, with room an append grows into (in widest)
+line.to:16:20: `name.trim()` in `prelude.trimWhitespace`, `textNative.betweenWithin(text, start, end)` goes in the region of a turn of the loop at line 15, with room an append grows into (in widest)
 line.to:16:20: `name.trim()` in `prelude.trimmed`, `textNative.trim(text, set, false, ends)` goes in the region of a turn of the loop at line 15, with room an append grows into (in widest)
 line.to:18:13: `line = "{line} {word}"` goes in the region of a turn of the loop at line 15 (in widest)
 ```

@@ -1628,12 +1628,13 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, s
     let types = &program.types;
     crate::captured::captured(bodies, types);
     after("captured", bodies, types, sources);
-    crate::inline::inline(bodies);
+    crate::inline::inline(bodies, types);
     lower::drop_dead_cancellations(bodies);
     after("inline", bodies, types, sources);
     crate::elide::elide(bodies, types);
     after("elide", bodies, types, sources);
     crate::thread::thread(bodies, types);
+    crate::elide::fold_between_byte_length(bodies, types);
     after("thread", bodies, types, sources);
     crate::takes::takes(bodies, types, program);
     after("takes", bodies, types, sources);

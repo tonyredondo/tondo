@@ -33,8 +33,18 @@ const GUARD: usize = 4;
 const SPECIALIZED: usize = 400;
 const COPIES: usize = 256;
 
-pub fn inline(bodies: &mut Vec<Body>) {
+/// The largest callee cost (in warm statements and branches) considered for
+/// trial inlining, once `inline_small` has finished.
+const TRIAL_CEILING: usize = 140;
+/// The largest post-simplification cost a trial may leave unless it drops an
+/// allocation or devirtualizes an indirect call.
+const TRIAL_RESULT_MAX: usize = 112;
+/// The most simplified statements trial inlining may add to any one caller.
+const CALLER_GROWTH_MAX: usize = 512;
+
+pub fn inline(bodies: &mut Vec<Body>, types: &crate::types::Types) {
     inline_small(bodies);
+    inline_by_trial(bodies, types);
     let guards: Vec<Option<Guard>> = bodies.iter().map(Guard::of).collect();
     if guards.iter().any(Option::is_some) {
         crate::parallel::each_mut(bodies, |body| {
@@ -534,12 +544,11 @@ fn small(body: &Body) -> bool {
     not_small(body).is_none()
 }
 
-/// Why a function is not inlined, or none when it is small enough.
-fn not_small(body: &Body) -> Option<String> {
+/// Why a function cannot be inlined structurally (regardless of size).
+fn inlinable_structure(body: &Body) -> Option<String> {
     if body.osr.is_some() || !body.points.is_empty() {
         return Some("it is a live build's".to_string());
     }
-    let cost = self::cost(body);
     for block in &body.blocks {
         for statement in &block.stmts {
             match statement {
@@ -556,8 +565,8 @@ fn not_small(body: &Body) -> Option<String> {
             }
         }
     }
-    if cost > SMALL {
-        return Some(format!("its body costs {cost}, more than the {SMALL} inlining takes"));
+    if !body.loans.iter().any(|&lent| lent) {
+        return None;
     }
     // A loan becomes the place lent, which cannot be an index or a local
     // a statement defines whole; a place can be assigned, as
@@ -577,6 +586,34 @@ fn not_small(body: &Body) -> Option<String> {
     }
     let fits = body.params.iter().enumerate().all(|(index, param)| !loan(body, index) || !named.contains(param));
     (!fits).then(|| "a loan it takes is an index, or what a statement binds".to_string())
+}
+
+/// Why a function is not inlined, or none when it is small enough.
+fn not_small(body: &Body) -> Option<String> {
+    let cost = self::cost(body);
+    if body.osr.is_some() || !body.points.is_empty() {
+        return Some("it is a live build's".to_string());
+    }
+    for block in &body.blocks {
+        for statement in &block.stmts {
+            match statement {
+                Statement::DeferPush(..) | Statement::DeferPop => return Some("it has a `defer`".to_string()),
+                Statement::OsrLoad(_) => return Some("it is a live build's".to_string()),
+                Statement::Assign(_, rvalue, _) => match &**rvalue {
+                    Rvalue::CallOsr(..) | Rvalue::Restart(_) | Rvalue::Transfer(_) | Rvalue::OsrPoint => {
+                        return Some("it is a live build's".to_string());
+                    }
+                    Rvalue::TestMembers(_) => return Some("it runs tests".to_string()),
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
+    if cost > SMALL {
+        return Some(format!("its body costs {cost}, more than the {SMALL} inlining takes"));
+    }
+    inlinable_structure(body)
 }
 
 /// Whether a parameter is a loan; a closure's body lists none for its
@@ -621,7 +658,7 @@ fn defined(body: &Body) -> HashSet<Local> {
 /// The caller with its calls of small functions inlined, unless it has
 /// none.
 fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Body> {
-    let callee_of = |statement: &Statement| match statement {
+    inline_matching(caller, |_, _, statement| match statement {
         Statement::Assign(_, rvalue, _) => match &**rvalue {
             Rvalue::Call(Callee::Fn(id), _) if id.0 as usize != index => {
                 small[id.0 as usize].as_ref().filter(|callee| fits(callee, caller))
@@ -629,8 +666,20 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
             _ => None,
         },
         _ => None,
-    };
-    if !caller.blocks.iter().flat_map(|block| &block.stmts).any(|statement| callee_of(statement).is_some()) {
+    })
+}
+
+/// The caller with the calls `callee_at` selects inlined, unless none match.
+fn inline_matching<'b>(
+    caller: &Body,
+    callee_at: impl Fn(usize, usize, &Statement) -> Option<&'b Body>,
+) -> Option<Body> {
+    let any = caller
+        .blocks
+        .iter()
+        .enumerate()
+        .any(|(b, block)| block.stmts.iter().enumerate().any(|(at, stmt)| callee_at(b, at, stmt).is_some()));
+    if !any {
         return None;
     }
     let mut body = caller.clone();
@@ -646,7 +695,8 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
     let mut checks = Vec::new();
     let mut unwound = Vec::new();
     for (index, block) in caller.blocks.iter().enumerate() {
-        let quiet = quieted(block, &callee_of);
+        let last_call = block.stmts.len().saturating_sub(3);
+        let quiet = quieted(block, &|stmt| callee_at(index, last_call, stmt));
         let block = quiet.as_ref().unwrap_or(block);
         starts.push(BlockId(blocks.len() as u32));
         let scope = caller.scopes.get(index).copied().flatten();
@@ -659,7 +709,7 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
             if then.is_some() {
                 break;
             }
-            let Some(callee) = callee_of(statement) else {
+            let Some(callee) = callee_at(index, at, statement) else {
                 current.push(statement.clone());
                 continue;
             };
@@ -1290,4 +1340,758 @@ fn indexed(arguments: &[Operand]) -> bool {
 /// Whether a parameter's assignment reads its argument by an index.
 fn reads_index(statement: &Statement) -> bool {
     matches!(statement, Statement::Assign(_, rvalue, _) if matches!(&**rvalue, Rvalue::Use(argument) if indexed(std::slice::from_ref(argument))))
+}
+
+/// Metrics of a body over its warm (non-unwinding) reachable blocks, used to
+/// weigh whether inlining a call past `SMALL` pays for itself.
+#[derive(Clone, Copy, Debug)]
+struct Metrics {
+    cost: usize,
+    allocs: usize,
+    indirects: usize,
+}
+
+impl Metrics {
+    fn of(body: &Body) -> Metrics {
+        let warm = warm(body);
+        let (mut cost, mut allocs, mut indirects) = (0, 0, 0);
+        for (block, is_warm) in body.blocks.iter().zip(warm) {
+            if !is_warm {
+                continue;
+            }
+            cost += block_cost(block);
+            for statement in &block.stmts {
+                if let Statement::Assign(_, rvalue, _) = statement {
+                    if is_alloc(rvalue) {
+                        allocs += 1;
+                    }
+                    if matches!(&**rvalue, Rvalue::CallIndirect(..)) {
+                        indirects += 1;
+                    }
+                }
+            }
+        }
+        Metrics { cost, allocs, indirects }
+    }
+}
+
+fn is_alloc(rvalue: &Rvalue) -> bool {
+    match rvalue {
+        Rvalue::Array(..) | Rvalue::Concat(..) | Rvalue::Erase(..) => true,
+        Rvalue::ArrayOp(
+            crate::hir::ArrayOp::New
+            | crate::hir::ArrayOp::WithCapacity
+            | crate::hir::ArrayOp::Concat
+            | crate::hir::ArrayOp::Repeat
+            | crate::hir::ArrayOp::Join,
+            ..,
+        )
+        | Rvalue::MapOp(crate::hir::MapOp::New, ..) => true,
+        Rvalue::Call(Callee::Std(crate::hir::StdFn::Native(n)), _) => {
+            crate::hir::NATIVES[*n as usize].makes_in_region()
+        }
+        _ => false,
+    }
+}
+
+fn has_between_within(body: &Body) -> bool {
+    let warm = warm(body);
+    body.blocks.iter().zip(warm).filter(|(_, w)| *w).any(|(block, _)| {
+        block.stmts.iter().any(|stmt| {
+            matches!(
+                stmt,
+                Statement::Assign(_, rvalue, _)
+                    if matches!(
+                        &**rvalue,
+                        Rvalue::Call(Callee::Std(crate::hir::StdFn::Native(n)), _)
+                            if crate::hir::NATIVES[*n as usize].name == "betweenWithin"
+                    )
+            )
+        })
+    })
+}
+
+fn returns_variant(body: &Body, types: &crate::types::Types) -> bool {
+    use crate::types::TyKind;
+    if !matches!(types.kind(types.repr(body.result)), TyKind::Option(_) | TyKind::Result(..) | TyKind::Adt(_)) {
+        return false;
+    }
+    let warm = warm(body);
+    body.blocks.iter().zip(warm).filter(|(_, w)| *w).any(|(block, _)| {
+        block
+            .stmts
+            .iter()
+            .any(|stmt| matches!(stmt, Statement::Assign(_, rvalue, _) if matches!(&**rvalue, Rvalue::Variant(..))))
+    })
+}
+
+/// Whether a callee returns a counted value where one path returns a parameter
+/// and another returns a fresh allocation (`Stale::Given` in `regions.rs`):
+/// kept as a call, `regions.rs` must leave the allocation on the heap; inlined
+/// into a caller that does not return it, the allocation moves into a region.
+fn is_mixed_return(body: &Body, types: &crate::types::Types) -> bool {
+    if !types.needs_drop(body.result) || body.blocks.is_empty() {
+        return false;
+    }
+    // Bitmask per local: bit 0 = may come from a parameter, bit 1 = may come
+    // from a fresh allocation. Flow-sensitive so overwriting `x = param` with
+    // `x = "{x}..."` kills bit 0 instead of falsely marking `x` mixed.
+    const PARAM: u8 = 1;
+    const ALLOC: u8 = 2;
+
+    let count = body.locals.len();
+    let n_blocks = body.blocks.len();
+    let warm = warm(body);
+    let mut entry: Vec<Option<Vec<u8>>> = vec![None; n_blocks];
+    let mut start = vec![0u8; count];
+    for &p in &body.params {
+        start[p.0 as usize] = PARAM;
+    }
+    entry[0] = Some(start);
+
+    let step = |block: &BlockData, state: &mut [u8]| {
+        for stmt in &block.stmts {
+            match stmt {
+                Statement::Assign(place, rvalue, _) if place.path.is_empty() => {
+                    let d = place.local.0 as usize;
+                    state[d] = match &**rvalue {
+                        Rvalue::Use(Operand::Copy(src)) if src.path.is_empty() => state[src.local.0 as usize],
+                        _ if is_alloc(rvalue) => ALLOC,
+                        _ => 0,
+                    };
+                }
+                Statement::Clear(local) => state[local.0 as usize] = 0,
+                _ => {}
+            }
+        }
+    };
+
+    let mut changed = true;
+    let mut rounds = 0;
+    while changed && rounds < 32 {
+        changed = false;
+        rounds += 1;
+        for b in 0..n_blocks {
+            if !warm[b] {
+                continue;
+            }
+            let Some(mut state) = entry[b].clone() else { continue };
+            step(&body.blocks[b], &mut state);
+            for next in successors(&body.blocks[b].terminator) {
+                if !warm[next] {
+                    continue;
+                }
+                match &mut entry[next] {
+                    None => {
+                        entry[next] = Some(state.clone());
+                        changed = true;
+                    }
+                    Some(old) => {
+                        for (o, &s) in old.iter_mut().zip(&state) {
+                            let merged = *o | s;
+                            if merged != *o {
+                                *o = merged;
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut returned = 0u8;
+    for b in 0..n_blocks {
+        if !warm[b] {
+            continue;
+        }
+        let Some(mut state) = entry[b].clone() else { continue };
+        step(&body.blocks[b], &mut state);
+        if let Terminator::Return(Operand::Copy(place)) = &body.blocks[b].terminator
+            && place.path.is_empty()
+        {
+            returned |= state[place.local.0 as usize];
+        }
+    }
+    returned == (PARAM | ALLOC)
+}
+
+struct CalleeSlot {
+    body: Body,
+    base: std::sync::OnceLock<Metrics>,
+    has_between_within: bool,
+    returns_variant: bool,
+    mixed_return: bool,
+}
+
+impl CalleeSlot {
+    fn base_metrics(&self, types: &crate::types::Types) -> Metrics {
+        *self.base.get_or_init(|| {
+            let mut simplified = self.body.clone();
+            simplify_trial(&mut simplified, types);
+            Metrics::of(&simplified)
+        })
+    }
+}
+
+fn trial_eligible(body: &Body) -> bool {
+    let c = cost(body);
+    c > SMALL && c <= TRIAL_CEILING && inlinable_structure(body).is_none()
+}
+
+fn simplify_trial(body: &mut Body, types: &crate::types::Types) {
+    crate::elide::elide_one(body, types);
+    crate::thread::thread_one(body, types);
+    crate::elide::fold_between_byte_length_in(body, types);
+    crate::elide::drop_dead_pure_in(body);
+}
+
+#[derive(Clone, PartialEq)]
+enum ArgClue {
+    Param,
+    Const(Const),
+    Variant(u32),
+}
+
+type TrialKey = (usize, Vec<ArgClue>, bool, bool);
+
+struct CallerFacts {
+    reachable: Vec<bool>,
+    consts: Vec<Option<Const>>,
+    variants: Vec<Option<u32>>,
+    byte_length_only: Vec<bool>,
+    matched_variant: Vec<bool>,
+    escapes_return: Vec<bool>,
+}
+
+impl CallerFacts {
+    fn of(body: &Body, types: &crate::types::Types) -> CallerFacts {
+        use crate::hir::StrOp;
+        use crate::types::Ty;
+
+        let n_blocks = body.blocks.len();
+        let mut reachable = vec![false; n_blocks];
+        if n_blocks > 0 {
+            let mut stack = vec![0usize];
+            reachable[0] = true;
+            while let Some(b) = stack.pop() {
+                for next in successors(&body.blocks[b].terminator) {
+                    if !reachable[next] {
+                        reachable[next] = true;
+                        stack.push(next);
+                    }
+                }
+            }
+        }
+
+        let count = body.locals.len();
+        let mut defs = vec![0u32; count];
+        let mut lent = vec![false; count];
+        for &p in &body.params {
+            defs[p.0 as usize] += 1;
+        }
+        let mut byte_length_only: Vec<bool> =
+            (0..count).map(|i| types.repr(body.locals[i]) == Ty::STRING && body.names[i].is_none()).collect();
+        for &l in body.params.iter().chain(&body.ret).chain(&body.arguments) {
+            byte_length_only[l.0 as usize] = false;
+        }
+        for &(l, ..) in &body.scoped {
+            byte_length_only[l.0 as usize] = false;
+        }
+
+        let mut matched_variant = vec![false; count];
+        let mut escapes_return = vec![false; count];
+        let mut copies: Vec<(Local, Local)> = Vec::new();
+        let (mut used_buf, mut def_buf) = (Vec::new(), Vec::new());
+
+        for (b, block) in body.blocks.iter().enumerate() {
+            if !reachable[b] {
+                continue;
+            }
+            used_buf.clear();
+            terminator_uses(&block.terminator, &mut used_buf);
+            for &l in &used_buf {
+                byte_length_only[l.0 as usize] = false;
+            }
+            if let Terminator::Return(Operand::Copy(p)) = &block.terminator
+                && p.path.is_empty()
+            {
+                escapes_return[p.local.0 as usize] = true;
+            }
+            for stmt in &block.stmts {
+                match stmt {
+                    Statement::Assign(place, rvalue, _) => {
+                        if place.path.is_empty() {
+                            defs[place.local.0 as usize] += 1;
+                        } else {
+                            defs[place.local.0 as usize] += 2;
+                            byte_length_only[place.local.0 as usize] = false;
+                        }
+                        match &**rvalue {
+                            Rvalue::Use(Operand::Copy(src)) if place.path.is_empty() && src.path.is_empty() => {
+                                if src.local != place.local {
+                                    copies.push((place.local, src.local));
+                                }
+                            }
+                            Rvalue::StrOp(StrOp::ByteLength, args, _) if matches!(&args[..], [Operand::Copy(src)] if src.path.is_empty()) =>
+                                {}
+                            Rvalue::Discriminant(of) if of.path.is_empty() => {
+                                matched_variant[of.local.0 as usize] = true;
+                                byte_length_only[of.local.0 as usize] = false;
+                            }
+                            Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) => {
+                                defs[target.local.0 as usize] += 2;
+                                used_buf.clear();
+                                def_buf.clear();
+                                statement_locals(stmt, &mut used_buf, &mut def_buf);
+                                for &l in &used_buf {
+                                    byte_length_only[l.0 as usize] = false;
+                                }
+                            }
+                            _ => {
+                                used_buf.clear();
+                                rvalue_uses(rvalue, &mut used_buf);
+                                for &l in &used_buf {
+                                    byte_length_only[l.0 as usize] = false;
+                                }
+                            }
+                        }
+                    }
+                    Statement::Lend(alias, place) => {
+                        defs[alias.0 as usize] += 2;
+                        lent[alias.0 as usize] = true;
+                        lent[place.local.0 as usize] = true;
+                        byte_length_only[alias.0 as usize] = false;
+                        byte_length_only[place.local.0 as usize] = false;
+                    }
+                    Statement::LendAt(alias, op) => {
+                        defs[alias.0 as usize] += 2;
+                        lent[alias.0 as usize] = true;
+                        byte_length_only[alias.0 as usize] = false;
+                        if let Operand::Copy(place) = op {
+                            lent[place.local.0 as usize] = true;
+                            byte_length_only[place.local.0 as usize] = false;
+                        }
+                    }
+                    Statement::Clear(local) => {
+                        defs[local.0 as usize] += 2;
+                    }
+                    Statement::Release(place) if place.path.is_empty() => {}
+                    _ => {
+                        used_buf.clear();
+                        def_buf.clear();
+                        statement_locals(stmt, &mut used_buf, &mut def_buf);
+                        for &l in &used_buf {
+                            byte_length_only[l.0 as usize] = false;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Propagate single-definition constants and variants.
+        let mut consts: Vec<Option<Const>> = vec![None; count];
+        let mut variants: Vec<Option<u32>> = vec![None; count];
+        for (b, block) in body.blocks.iter().enumerate() {
+            if !reachable[b] {
+                continue;
+            }
+            for stmt in &block.stmts {
+                let Statement::Assign(place, rvalue, _) = stmt else { continue };
+                if !place.path.is_empty() {
+                    continue;
+                }
+                let l = place.local.0 as usize;
+                if defs[l] != 1 || lent[l] {
+                    continue;
+                }
+                match &**rvalue {
+                    Rvalue::Use(Operand::Const(c)) => consts[l] = Some(c.clone()),
+                    Rvalue::Variant(tag, _) => variants[l] = Some(*tag),
+                    _ => {}
+                }
+            }
+        }
+        loop {
+            let mut changed = false;
+            for &(dst, src) in &copies {
+                let (d, s) = (dst.0 as usize, src.0 as usize);
+                if defs[d] == 1 && !lent[d] && defs[s] == 1 && !lent[s] {
+                    if consts[d].is_none() && consts[s].is_some() {
+                        consts[d] = consts[s].clone();
+                        changed = true;
+                    }
+                    if variants[d].is_none() && variants[s].is_some() {
+                        variants[d] = variants[s];
+                        changed = true;
+                    }
+                }
+                if !byte_length_only[d] && byte_length_only[s] {
+                    byte_length_only[s] = false;
+                    changed = true;
+                }
+                if matched_variant[d] && !matched_variant[s] {
+                    matched_variant[s] = true;
+                    changed = true;
+                }
+                if escapes_return[d] && !escapes_return[s] {
+                    escapes_return[s] = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        CallerFacts { reachable, consts, variants, byte_length_only, matched_variant, escapes_return }
+    }
+}
+
+/// Evaluates inlining `callee` at a specific call site inside an O(callee)
+/// synthetic wrapper that exposes the call site's constant/variant arguments
+/// and immediate result consumer (`ByteLength` or `Discriminant`), returning
+/// the post-simplification metrics.
+fn evaluate_trial(
+    callee: &Body,
+    arg_clues: &[ArgClue],
+    want_byte_len: bool,
+    want_match: bool,
+    types: &crate::types::Types,
+) -> Metrics {
+    use crate::hir::StrOp;
+    use crate::types::Ty;
+
+    let mut locals: Vec<Ty> = Vec::new();
+    let mut params: Vec<Local> = Vec::new();
+    let mut loans: Vec<bool> = Vec::new();
+    let mut stmts: Vec<Statement> = Vec::new();
+    let mut call_args: Vec<Operand> = Vec::with_capacity(callee.params.len());
+
+    let push_local = |locals: &mut Vec<Ty>, ty: Ty| -> Local {
+        let local = Local(locals.len() as u32);
+        locals.push(ty);
+        local
+    };
+
+    for (idx, (&callee_param, clue)) in callee.params.iter().zip(arg_clues).enumerate() {
+        let param_ty = callee.locals[callee_param.0 as usize];
+        let is_loan = loan(callee, idx);
+        match clue {
+            ArgClue::Const(c) if !is_loan => {
+                let local = push_local(&mut locals, param_ty);
+                stmts.push(Statement::Assign(
+                    Place::local(local),
+                    Box::new(Rvalue::Use(Operand::Const(c.clone()))),
+                    Span::default(),
+                ));
+                call_args.push(Operand::local(local));
+            }
+            ArgClue::Variant(tag) if !is_loan => {
+                if let Some(variants) = types.variants(param_ty)
+                    && let Some(payload_tys) = variants.get(*tag as usize)
+                {
+                    let mut payload = Vec::with_capacity(payload_tys.len());
+                    for &ty in payload_tys {
+                        let p = push_local(&mut locals, ty);
+                        params.push(p);
+                        loans.push(false);
+                        payload.push(Operand::local(p));
+                    }
+                    let local = push_local(&mut locals, param_ty);
+                    stmts.push(Statement::Assign(
+                        Place::local(local),
+                        Box::new(Rvalue::Variant(*tag, payload)),
+                        Span::default(),
+                    ));
+                    call_args.push(Operand::local(local));
+                } else {
+                    let p = push_local(&mut locals, param_ty);
+                    params.push(p);
+                    loans.push(false);
+                    call_args.push(Operand::local(p));
+                }
+            }
+            _ => {
+                let p = push_local(&mut locals, param_ty);
+                params.push(p);
+                loans.push(is_loan);
+                call_args.push(Operand::local(p));
+            }
+        }
+    }
+
+    let sentinel = crate::hir::FnId(u32::MAX);
+    let dest = push_local(&mut locals, callee.result);
+    stmts.push(Statement::Assign(
+        Place::local(dest),
+        Box::new(Rvalue::Call(Callee::Fn(sentinel), call_args)),
+        Span::default(),
+    ));
+
+    let (ret_local, result_ty, terminator) = if want_byte_len {
+        let len = push_local(&mut locals, Ty::INT);
+        stmts.push(Statement::Assign(
+            Place::local(len),
+            Box::new(Rvalue::StrOp(StrOp::ByteLength, vec![Operand::local(dest)], Span::default())),
+            Span::default(),
+        ));
+        stmts.push(Statement::Release(Place::local(dest)));
+        (Some(len), Ty::INT, Terminator::Return(Operand::local(len)))
+    } else if want_match {
+        let tag = push_local(&mut locals, Ty::INT);
+        stmts.push(Statement::Assign(
+            Place::local(tag),
+            Box::new(Rvalue::Discriminant(Place::local(dest))),
+            Span::default(),
+        ));
+        if types.needs_drop(callee.result) {
+            stmts.push(Statement::Release(Place::local(dest)));
+        }
+        (Some(tag), Ty::INT, Terminator::Return(Operand::local(tag)))
+    } else if crate::verify::nothing(types, callee.result) {
+        (None, callee.result, Terminator::Return(Operand::Const(Const::Unit)))
+    } else {
+        (Some(dest), callee.result, Terminator::Return(Operand::local(dest)))
+    };
+
+    let n_locals = locals.len();
+    let wrapper = Body {
+        name: format!("<trial:{}>", callee.name),
+        notes: Vec::new(),
+        remarks: Vec::new(),
+        locals,
+        framed: Vec::new(),
+        names: vec![None; n_locals],
+        scoped: Vec::new(),
+        arguments: Vec::new(),
+        split: Vec::new(),
+        params,
+        loans,
+        takes: Vec::new(),
+        ret: ret_local,
+        result: result_ty,
+        blocks: vec![BlockData { stmts, terminator }],
+        osr: None,
+        points: Vec::new(),
+        origins: vec![Origin::Made(Vec::new(), 0); n_locals],
+        pauses: Vec::new(),
+        span: callee.span,
+        starts: Vec::new(),
+        loop_spans: Vec::new(),
+        ways: Vec::new(),
+        inlined: Vec::new(),
+        scopes: vec![None],
+        needs: callee.needs,
+        widest: callee.widest,
+        lasting: None,
+        region: Vec::new(),
+        loops: Vec::new(),
+        copy_of: None,
+        given: Vec::new(),
+        region_calls: Vec::new(),
+        growable: Vec::new(),
+    };
+
+    let Some(mut inlined) = inline_matching(&wrapper, |_, _, stmt| {
+        matches!(stmt, Statement::Assign(_, r, _) if matches!(&**r, Rvalue::Call(Callee::Fn(id), _) if *id == sentinel))
+            .then_some(callee)
+    }) else {
+        return Metrics::of(callee);
+    };
+    simplify_trial(&mut inlined, types);
+    Metrics::of(&inlined)
+}
+
+/// Weighs calls of functions past `SMALL` (up to `TRIAL_CEILING`) by what
+/// inlining buys at each call site: shrinking under `SMALL`, eliminating an
+/// allocation (such as `trim().byteLength()`), devirtualizing an indirect call,
+/// unlocking a caller/loop region for a mixed-return callee, or folding away
+/// at least a quarter of its cost. Runs once after `inline_small` with a hard
+/// per-caller growth cap (`CALLER_GROWTH_MAX`).
+fn inline_by_trial(bodies: &mut [Body], types: &crate::types::Types) {
+    // Only consider callees that are actually called by some non-live caller.
+    let mut called = vec![false; bodies.len()];
+    for (caller_idx, caller) in bodies.iter().enumerate() {
+        if caller.osr.is_some() || !caller.points.is_empty() || caller.blocks.is_empty() {
+            continue;
+        }
+        for stmt in caller.blocks.iter().flat_map(|b| &b.stmts) {
+            if let Statement::Assign(_, r, _) = stmt
+                && let Rvalue::Call(Callee::Fn(id), _) = &**r
+                && id.0 as usize != caller_idx
+            {
+                called[id.0 as usize] = true;
+            }
+        }
+    }
+
+    let indices: Vec<usize> = (0..bodies.len()).collect();
+    let candidates: Vec<Option<CalleeSlot>> = crate::parallel::map(&indices, 16, |&index| {
+        if !called[index] {
+            return None;
+        }
+        let body = &bodies[index];
+        if !trial_eligible(body) {
+            return None;
+        }
+        Some(CalleeSlot {
+            body: body.clone(),
+            base: std::sync::OnceLock::new(),
+            has_between_within: has_between_within(body),
+            returns_variant: returns_variant(body, types),
+            mixed_return: is_mixed_return(body, types),
+        })
+    });
+    if candidates.iter().all(Option::is_none) {
+        return;
+    }
+
+    let updated: Vec<Option<(Body, Vec<String>)>> = crate::parallel::map(&indices, 16, |&index| {
+        let caller = &bodies[index];
+        if caller.osr.is_some() || !caller.points.is_empty() || caller.blocks.is_empty() {
+            return None;
+        }
+        let has_candidate = caller.blocks.iter().flat_map(|b| &b.stmts).any(|stmt| {
+            matches!(
+                stmt,
+                Statement::Assign(_, r, _)
+                    if matches!(
+                        &**r,
+                        Rvalue::Call(Callee::Fn(id), _)
+                            if id.0 as usize != index
+                                && candidates[id.0 as usize].as_ref().is_some_and(|c| fits(&c.body, caller))
+                    )
+            )
+        });
+        if !has_candidate {
+            return None;
+        }
+
+        let facts = CallerFacts::of(caller, types);
+        let mut accepted: HashSet<(usize, usize)> = HashSet::new();
+        let mut added_cost = 0usize;
+        let mut notes: Vec<String> = Vec::new();
+        let mut trial_cache: Vec<(TrialKey, Metrics)> = Vec::new();
+
+        for (b, block) in caller.blocks.iter().enumerate() {
+            if !facts.reachable[b] {
+                continue;
+            }
+            for (at, stmt) in block.stmts.iter().enumerate() {
+                let Statement::Assign(dest, rvalue, _) = stmt else { continue };
+                let Rvalue::Call(Callee::Fn(id), args) = &**rvalue else { continue };
+                let callee_idx = id.0 as usize;
+                if callee_idx == index {
+                    continue;
+                }
+                let Some(info) = &candidates[callee_idx] else { continue };
+                if !fits(&info.body, caller) || args.len() != info.body.params.len() {
+                    continue;
+                }
+
+                let arg_clues: Vec<ArgClue> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(p_idx, arg)| {
+                        if loan(&info.body, p_idx) {
+                            return ArgClue::Param;
+                        }
+                        match arg {
+                            Operand::Const(c) => ArgClue::Const(c.clone()),
+                            Operand::Copy(p) if p.path.is_empty() => {
+                                if let Some(c) = &facts.consts[p.local.0 as usize] {
+                                    ArgClue::Const(c.clone())
+                                } else if let Some(tag) = facts.variants[p.local.0 as usize] {
+                                    ArgClue::Variant(tag)
+                                } else {
+                                    ArgClue::Param
+                                }
+                            }
+                            _ => ArgClue::Param,
+                        }
+                    })
+                    .collect();
+
+                let dest_local = dest.path.is_empty().then_some(dest.local);
+                let want_byte_len =
+                    info.has_between_within && dest_local.is_some_and(|l| facts.byte_length_only[l.0 as usize]);
+                let want_match =
+                    info.returns_variant && dest_local.is_some_and(|l| facts.matched_variant[l.0 as usize]);
+                let want_region = info.mixed_return && dest_local.is_none_or(|l| !facts.escapes_return[l.0 as usize]);
+                let has_arg_clue = arg_clues.iter().any(|c| !matches!(c, ArgClue::Param));
+                if !has_arg_clue && !want_byte_len && !want_match && !want_region {
+                    continue;
+                }
+
+                let base = info.base_metrics(types);
+                let after = if let Some((_, cached)) = trial_cache.iter().find(|((c, clues, bl, m), _)| {
+                    *c == callee_idx && *bl == want_byte_len && *m == want_match && *clues == arg_clues
+                }) {
+                    *cached
+                } else {
+                    let measured = evaluate_trial(&info.body, &arg_clues, want_byte_len, want_match, types);
+                    trial_cache.push(((callee_idx, arg_clues, want_byte_len, want_match), measured));
+                    measured
+                };
+
+                let reason = if after.cost <= SMALL {
+                    Some("shrunk_small")
+                } else if after.allocs < base.allocs && after.cost <= TRIAL_CEILING {
+                    Some("dropped_alloc")
+                } else if after.indirects < base.indirects && after.cost <= TRIAL_CEILING {
+                    Some("dropped_indirect")
+                } else if want_region && after.cost <= TRIAL_RESULT_MAX {
+                    Some("unlocked_region")
+                } else if after.cost + 12 <= base.cost
+                    && after.cost * 4 <= base.cost * 3
+                    && after.cost <= TRIAL_RESULT_MAX
+                {
+                    Some("big_fold")
+                } else {
+                    None
+                };
+
+                let Some(reason) = reason else { continue };
+                if added_cost + after.cost > CALLER_GROWTH_MAX {
+                    continue;
+                }
+                accepted.insert((b, at));
+                added_cost += after.cost;
+                if crate::mir_text::noting(&caller.name) {
+                    notes.push(format!(
+                        "trial inline: `{}` into `{}` ({reason}: cost {} -> {}, allocs {} -> {}, indirects {} -> {})",
+                        info.body.name,
+                        caller.name,
+                        base.cost,
+                        after.cost,
+                        base.allocs,
+                        after.allocs,
+                        base.indirects,
+                        after.indirects
+                    ));
+                }
+            }
+        }
+
+        if accepted.is_empty() {
+            return None;
+        }
+        let inlined = inline_matching(caller, |b, at, stmt| {
+            if !accepted.contains(&(b, at)) {
+                return None;
+            }
+            let Statement::Assign(_, r, _) = stmt else { return None };
+            let Rvalue::Call(Callee::Fn(id), _) = &**r else { return None };
+            candidates[id.0 as usize].as_ref().map(|c| &c.body)
+        })?;
+        Some((inlined, notes))
+    });
+
+    for (body, update) in bodies.iter_mut().zip(updated) {
+        if let Some((mut inlined, mut notes)) = update {
+            inlined.notes.append(&mut notes);
+            *body = inlined;
+        }
+    }
 }
