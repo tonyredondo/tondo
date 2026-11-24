@@ -591,23 +591,26 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
     };
     // Output written so far reaches the terminal before the children's.
     super::flush_stdout();
-    let environment = super::env::environment();
+    let environment = super::env::inherited();
     let mut previous: Option<std::io::PipeReader> = None;
     let started = (|| {
         for (index, stage) in stages.iter().enumerate() {
             let last = index + 1 == stages.len();
-            let path = child_path(stage, &environment);
+            let path = child_path(stage, environment.as_deref().map(Vec::as_slice));
             let found = located(&stage.program, path.as_deref(), stage.directory.as_deref())?;
             let mut command =
                 std::process::Command::new(found.as_deref().map_or(stage.program.as_os_str(), Path::as_os_str));
-            command.args(&stage.arguments).env_clear();
+            command.args(&stage.arguments);
             // Its `argv[0]`, which `ps` shows, stays the name the plan gave.
             command.arg0(stage.invoked.as_ref().unwrap_or(&stage.program));
             // The first stage leads the group, and the others join it.
             if stage.group {
                 command.process_group(running.group.map_or(0, |group| group as i32));
             }
-            if !stage.clear_env {
+            if stage.clear_env {
+                command.env_clear();
+            } else if let Some(environment) = &environment {
+                command.env_clear();
                 command.envs(environment.iter().map(|(k, v)| (k, v)));
             }
             for (name, value) in &stage.env {
@@ -709,18 +712,19 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
 }
 
 /// The `PATH` a stage's program is looked up on: its environment's.
-fn child_path(stage: &Stage, environment: &[(OsString, OsString)]) -> Option<OsString> {
-    let mut path = if stage.clear_env {
-        None
-    } else {
-        environment.iter().find(|(name, _)| name == "PATH").map(|(_, value)| value.clone())
-    };
-    for (name, value) in &stage.env {
+fn child_path(stage: &Stage, environment: Option<&[(OsString, OsString)]>) -> Option<OsString> {
+    for (name, value) in stage.env.iter().rev() {
         if name == "PATH" {
-            path = value.clone();
+            return value.clone();
         }
     }
-    path
+    if stage.clear_env {
+        return None;
+    }
+    match environment {
+        Some(environment) => environment.iter().find(|(name, _)| name == "PATH").map(|(_, value)| value.clone()),
+        None => super::env::path_var(),
+    }
 }
 
 /// What `execvp` looks on when the child's environment has no `PATH`: the
@@ -747,36 +751,76 @@ const DEFAULT_PATH: &str = "/bin:/usr/bin";
 /// `/`, or a file that only `execvp` runs, a script with no `#!` that it
 /// hands to the shell.
 fn located(program: &OsStr, path: Option<&OsStr>, directory: Option<&Path>) -> std::io::Result<Option<PathBuf>> {
-    if program.is_empty() || program.as_bytes().contains(&b'/') {
+    let program = program.as_bytes();
+    if program.is_empty() || program.contains(&b'/') || program.contains(&0) {
         return Ok(None);
     }
-    let here = std::env::current_dir()?;
-    let directory = directory.map_or_else(|| here.clone(), |directory| here.join(directory));
     let path = path.map_or(DEFAULT_PATH.as_bytes(), OsStr::as_bytes);
+    let mut base: Option<PathBuf> = None;
+    let mut buf = Vec::with_capacity(128);
     let mut denied = false;
     for entry in path.split(|&byte| byte == b':') {
-        let file = directory.join(OsStr::from_bytes(entry)).join(program);
-        match std::fs::metadata(&file) {
-            Ok(found) if found.is_file() && runnable(&file) => return Ok(started_by_path(file)),
-            Ok(_) => denied = true,
-            Err(error) if error.kind() == ErrorKind::PermissionDenied => denied = true,
-            Err(_) => {}
+        if entry.contains(&0) {
+            continue;
+        }
+        buf.clear();
+        if entry.first() == Some(&b'/') {
+            buf.extend_from_slice(entry);
+        } else {
+            let root = match &base {
+                Some(root) => root,
+                None => {
+                    let here = std::env::current_dir()?;
+                    let resolved = directory.map_or(here.clone(), |dir| here.join(dir));
+                    base.insert(resolved)
+                }
+            };
+            buf.extend_from_slice(root.as_os_str().as_bytes());
+            if !entry.is_empty() {
+                if buf.last() != Some(&b'/') {
+                    buf.push(b'/');
+                }
+                buf.extend_from_slice(entry);
+            }
+        }
+        if buf.last() != Some(&b'/') {
+            buf.push(b'/');
+        }
+        buf.extend_from_slice(program);
+        buf.push(0);
+        let cpath = buf.as_ptr().cast();
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::stat(cpath, &mut st) } == 0 {
+            if (st.st_mode & libc::S_IFMT) == libc::S_IFREG && unsafe { libc::access(cpath, libc::X_OK) } == 0 {
+                return Ok(started_by_path_cstr(&buf));
+            }
+            denied = true;
+        } else if std::io::Error::last_os_error().raw_os_error() == Some(libc::EACCES) {
+            denied = true;
         }
     }
     Err(if denied { ErrorKind::PermissionDenied } else { ErrorKind::NotFound }.into())
 }
 
-/// Whether this process may run the file.
-fn runnable(file: &Path) -> bool {
-    let Ok(name) = std::ffi::CString::new(file.as_os_str().as_bytes()) else { return false };
-    unsafe { libc::access(name.as_ptr(), libc::X_OK) == 0 }
-}
-
 /// The file when the system runs it by itself, as its first bytes say: a
 /// `#!` line, or an executable of ELF or Mach-O. Another goes to `execvp`.
-fn started_by_path(file: PathBuf) -> Option<PathBuf> {
+fn started_by_path_cstr(nul_path: &[u8]) -> Option<PathBuf> {
     let mut head = [0u8; 4];
-    let read = std::fs::File::open(&file).and_then(|mut opened| opened.read(&mut head)).unwrap_or(0);
+    let fd = unsafe { libc::open(nul_path.as_ptr().cast(), libc::O_RDONLY | libc::O_CLOEXEC) };
+    let read = if fd >= 0 {
+        let mut got = 0usize;
+        while got < head.len() {
+            let n = unsafe { libc::read(fd, head[got..].as_mut_ptr().cast(), head.len() - got) };
+            if n <= 0 {
+                break;
+            }
+            got += n as usize;
+        }
+        unsafe { libc::close(fd) };
+        got
+    } else {
+        0
+    };
     let shebang = read >= 2 && head.starts_with(b"#!");
     let binary = read == 4
         && (head == *b"\x7fELF"
@@ -784,7 +828,7 @@ fn started_by_path(file: PathBuf) -> Option<PathBuf> {
                 u32::from_be_bytes(head),
                 0xfeed_face | 0xfeed_facf | 0xcefa_edfe | 0xcffa_edfe | 0xcafe_babe | 0xbeba_feca
             ));
-    (shebang || binary).then_some(file)
+    (shebang || binary).then(|| PathBuf::from(OsStr::from_bytes(&nul_path[..nul_path.len() - 1])))
 }
 
 /// The children of processes that started and nobody waited for, which a
@@ -1170,8 +1214,7 @@ pub unsafe extern "C" fn tondo_rt_process_which(name: *const Str, region: *mut c
     let found = if name.as_bytes().contains(&b'/') {
         Some(PathBuf::from(&name)).filter(|path| runnable(path))
     } else {
-        let environment = super::env::environment();
-        let path = environment.iter().find(|(key, _)| key == "PATH").map(|(_, value)| value.clone());
+        let path = super::env::path_var();
         path.unwrap_or_default().as_bytes().split(|&b| b == b':').find_map(|directory| {
             let directory = if directory.is_empty() { OsStr::new(".") } else { OsStr::from_bytes(directory) };
             Some(std::path::Path::new(directory).join(&name)).filter(|path| path.to_str().is_some() && runnable(path))
@@ -1375,15 +1418,18 @@ pub unsafe extern "C" fn tondo_rt_process_text(
 pub unsafe extern "C" fn tondo_rt_process_exec(plan: *mut PlanObject, _out: *mut i64) -> i64 {
     let Some(stage) = plan_ref(plan).stages.first() else { return HOST };
     let mut command = std::process::Command::new(&stage.program);
-    command.args(&stage.arguments).env_clear();
+    command.args(&stage.arguments);
     if let Some(invoked) = &stage.invoked {
         command.arg0(invoked);
     }
     if stage.group {
         command.process_group(0);
     }
-    if !stage.clear_env {
-        command.envs(super::env::environment().iter().map(|(k, v)| (k, v)));
+    if stage.clear_env {
+        command.env_clear();
+    } else if let Some(environment) = super::env::inherited() {
+        command.env_clear();
+        command.envs(environment.iter().map(|(k, v)| (k, v)));
     }
     for (name, value) in &stage.env {
         match value {
