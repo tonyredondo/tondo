@@ -210,10 +210,14 @@ impl Decoder<'_> {
                 i64::try_from(value).map_or(Item::Negative(value.into()), |v| Item::Int(-1 - v))
             }
             2 => Item::Bytes(self.chunks(2, argument, at)?),
-            3 => match String::from_utf8(self.chunks(3, argument, at)?) {
-                Ok(text) => Item::Text(text),
-                Err(_) => return self.fail(format!("a text string is not UTF-8 (byte {at})")),
-            },
+            3 => {
+                let bytes = self.chunks(3, argument, at)?;
+                if simdutf8::basic::from_utf8(&bytes).is_ok() {
+                    Item::Text(unsafe { String::from_utf8_unchecked(bytes) })
+                } else {
+                    return self.fail(format!("a text string is not UTF-8 (byte {at})"));
+                }
+            }
             4 | 5 => {
                 if self.at_key() {
                     return self.fail(format!("a map key is not text or an integer (byte {at})"));

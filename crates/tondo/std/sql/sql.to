@@ -269,10 +269,14 @@ fn nested(query: Query): Piece {
 /// A value interpolated in a literal: a parameter, or the list of an
 /// array's.
 fn bound[T: __serialization.Encode](value: T): Piece {
-    let sink = Capture { values: __sync.Mutex([]), listed: __sync.Mutex(false) }
+    let sink = Capture { state: __sync.Mutex(CaptureState { values: [], listed: false }) }
     value.encode(sink)
-    let values = sink.values.get()
-    if sink.listed.get() { Piece.Listed(values) } else { Piece.Bound(values.get(0) ?? Value.Null) }
+    let state = sink.state.get()
+    if state.listed {
+        Piece.Listed(state.values)
+    } else {
+        Piece.Bound(state.values.get(0) ?? Value.Null)
+    }
 }
 
 /// Bytes interpolated in a literal: one parameter, not a list of numbers.
@@ -287,14 +291,18 @@ fn boundOptionalBytes(bytes: Array[Byte]?): Piece {
     }
 }
 
+type CaptureState = {
+    values: Array[Value]
+    listed: Bool
+}
+
 /// The values a value encodes to: one scalar, or a list's.
 type Capture = {
-    values: __sync.Mutex[Array[Value]]
-    listed: __sync.Mutex[Bool]
+    state: __sync.Mutex[CaptureState]
 }
 
 fn Capture.put(self, value: Value) {
-    self.values.update(values => values.push(value))
+    self.state.update(state => state.values.push(value))
 }
 
 impl __serialization.Sink for Capture {
@@ -334,7 +342,11 @@ impl __serialization.Sink for Capture {
     }
 
     fn beginList(self, _count: Int) {
-        self.listed.set(true)
+        self.state.update(
+            (state) {
+                state.listed = true
+            },
+        )
     }
 
     fn endList(self) {}
@@ -353,35 +365,40 @@ impl __serialization.Sink for Capture {
 /// The text of a query with the placeholders and the quoted names a driver
 /// writes, and its parameters in order.
 fn rendered(query: Query, driver: Driver): (String, Array[Value]) {
-    var out = ""
+    var parts: Array[String] = []
     var parameters: Array[Value] = []
-    write(query, driver, var out, var parameters)
-    (out, parameters)
+    write(query, driver, var parts, var parameters)
+    (parts.join(""), parameters)
 }
 
-fn write(query: Query, driver: Driver, out: var String, parameters: var Array[Value]) {
+fn write(query: Query, driver: Driver, parts: var Array[String], parameters: var Array[Value]) {
     let placeholder = driver.placeholder
     for piece in query.pieces {
         match piece {
-            Piece.Text(text) => out = "{out}{text}"
-            Piece.Name(name) => out = "{out}{(driver.identifier)(name)}"
+            Piece.Text(text) => parts.push(text)
+            Piece.Name(name) => parts.push((driver.identifier)(name))
             Piece.Bound(value) => {
                 parameters.push(value)
-                out = "{out}{placeholder(parameters.length())}"
+                parts.push(placeholder(parameters.length()))
             }
             Piece.Listed(values) => {
                 if values.isEmpty() {
-                    out = "{out}(NULL)"
+                    parts.push("(NULL)")
                 } else {
-                    var marks: Array[String] = []
+                    parts.push("(")
+                    var first = true
                     for value in values {
+                        if not first {
+                            parts.push(", ")
+                        }
+                        first = false
                         parameters.push(value)
-                        marks.push(placeholder(parameters.length()))
+                        parts.push(placeholder(parameters.length()))
                     }
-                    out = "{out}({marks.join(", ")})"
+                    parts.push(")")
                 }
             }
-            Piece.Nested(inner) => write(inner, driver, var out, var parameters)
+            Piece.Nested(inner) => write(inner, driver, var parts, var parameters)
         }
     }
 }

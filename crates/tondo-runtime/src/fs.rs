@@ -110,7 +110,11 @@ unsafe fn path(text: *const Str) -> Outcome<String> {
 }
 
 fn text(bytes: Vec<u8>) -> Outcome<String> {
-    String::from_utf8(bytes).map_err(|_| FsError::InvalidData)
+    if simdutf8::basic::from_utf8(&bytes).is_ok() {
+        Ok(unsafe { String::from_utf8_unchecked(bytes) })
+    } else {
+        Err(FsError::InvalidData)
+    }
 }
 
 /// Stores a result: the value through `store`, or the error's code.
@@ -428,5 +432,5 @@ pub unsafe extern "C" fn tondo_rt_str_to_bytes(text: *const Str) -> *mut ArrayHe
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_from_bytes(bytes: *mut ArrayHeader) -> *mut Str {
     let bytes = unsafe { array_items::<u8>(bytes) };
-    if std::str::from_utf8(bytes).is_ok() { str_new(bytes) } else { std::ptr::null_mut() }
+    if simdutf8::basic::from_utf8(bytes).is_ok() { str_new(bytes) } else { std::ptr::null_mut() }
 }

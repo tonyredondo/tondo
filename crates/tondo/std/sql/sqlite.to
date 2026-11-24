@@ -29,7 +29,7 @@ fn connectSqlite(url: String): Connection ! SqlError {
 fn runSqlite(opened: sqlNative.Native, statement: Statement): Outcome ! SqlError {
     var encoded: Array[Byte] = []
     for value in statement.parameters {
-        encoded.extend(encodedValue(value)?)
+        pushEncodedValue(var encoded, value)?
     }
     // Without parameters, a statement that writes may be several.
     let batch = statement.parameters.isEmpty() and statement.operation != Operation.Query
@@ -77,17 +77,26 @@ fn runSqlite(opened: sqlNative.Native, statement: Statement): Outcome ! SqlError
     }
 }
 
-/// A parameter as SQLite's bytes: its tag and its value.
-fn encodedValue(value: Value): Array[Byte] ! SqlError {
+/// Appends a parameter as SQLite's bytes directly into `out`: its tag and its value.
+fn pushEncodedValue(out: var Array[Byte], value: Value): !SqlError {
     match value {
-        Value.Null => [Byte(0u8)]
-        Value.Bool(flag) => [Byte(1u8)].concat(littleEndian(if flag { 1 } else { 0 }))
-        Value.Int(number) => [Byte(1u8)].concat(littleEndian(number))
-        Value.Float(number) => [Byte(2u8)].concat(littleEndian(Int.wrapping(number.bits())))
-        Value.Number(digits) => sized(3, digits.bytes())
-        Value.Text(text) => sized(3, text.bytes())
-        Value.Bytes(bytes) => sized(4, bytes)
-        Value.DateTime(moment) => sized(3, "{moment}".bytes())
+        Value.Null => out.push(Byte(0u8))
+        Value.Bool(flag) => {
+            out.push(Byte(1u8))
+            pushLittleEndian(var out, if flag { 1 } else { 0 })
+        }
+        Value.Int(number) => {
+            out.push(Byte(1u8))
+            pushLittleEndian(var out, number)
+        }
+        Value.Float(number) => {
+            out.push(Byte(2u8))
+            pushLittleEndian(var out, Int.wrapping(number.bits()))
+        }
+        Value.Number(digits) => pushSized(var out, 3, digits.bytes())
+        Value.Text(text) => pushSized(var out, 3, text.bytes())
+        Value.Bytes(bytes) => pushSized(var out, 4, bytes)
+        Value.DateTime(moment) => pushSized(var out, 3, "{moment}".bytes())
         Value.List(_) => fail SqlError.of(
             ErrorKind.Other,
             "SQLite has no arrays: interpolate the array, for `IN ({{ids}})`",
@@ -95,23 +104,27 @@ fn encodedValue(value: Value): Array[Byte] ! SqlError {
     }
 }
 
-fn sized(tag: Int, bytes: Array[Byte]): Array[Byte] {
+fn pushSized(out: var Array[Byte], tag: Int, bytes: Array[Byte]) {
     var length = bytes.length()
-    var head = [Byte(UInt8.wrapping(tag))]
+    out.push(Byte(UInt8.wrapping(tag)))
     for _ in 0..4 {
-        head.push(Byte(UInt8.wrapping(length & 0xff)))
-        length = length / 256
+        out.push(Byte(UInt8.wrapping(length & 0xff)))
+        length = length >> 8
     }
-    head.concat(bytes)
+    out.extend(bytes)
 }
 
-fn littleEndian(value: Int): Array[Byte] {
-    var out: Array[Byte] = []
+fn pushLittleEndian(out: var Array[Byte], value: Int) {
     var rest = UInt.wrapping(value)
     for _ in 0..8 {
         out.push(Byte(UInt8.wrapping(rest & 0xff)))
         rest = rest >> 8
     }
+}
+
+fn littleEndian(value: Int): Array[Byte] {
+    var out: Array[Byte] = []
+    pushLittleEndian(var out, value)
     out
 }
 

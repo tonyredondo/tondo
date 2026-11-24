@@ -646,7 +646,7 @@ impl Reader {
         // ASCII byte, and an escape adds a whole character.
         let valid = read.and_then(|()| match self.source {
             None => Ok(()),
-            Some(_) => std::str::from_utf8(&out).map(|_| ()).map_err(|_| "invalid UTF-8 in string"),
+            Some(_) => simdutf8::basic::from_utf8(&out).map(|_| ()).map_err(|_| "invalid UTF-8 in string"),
         });
         if valid.is_err() {
             out.clear();
