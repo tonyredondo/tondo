@@ -378,3 +378,149 @@ fn elide_once(body: &mut Body, types: &Types) -> bool {
     }
     changed
 }
+
+/// Drops assignments to locals that nothing in the function ever reads, retains,
+/// releases, moves, lends or returns, when the right-hand side is pure and
+/// cannot panic (such as unused split record field loads from an in-bounds
+/// element or an unused decoded `Char` from `CharIterator.next`).
+pub fn drop_dead_pure(bodies: &mut [Body]) {
+    crate::parallel::each_mut(bodies, drop_dead_pure_in);
+}
+
+fn pure_place(place: &Place) -> bool {
+    place.path.iter().all(|p| matches!(p, Proj::Field(_) | Proj::Variant(..) | Proj::InBounds(_) | Proj::Captures(_)))
+}
+
+fn pure_operand(operand: &Operand) -> bool {
+    match operand {
+        Operand::Copy(place) => pure_place(place),
+        Operand::Const(_) => true,
+    }
+}
+
+fn pure_rvalue(rvalue: &Rvalue) -> bool {
+    use crate::ast::{BinOp, UnaryOp};
+    use crate::hir::{Callee, NATIVES, StdFn, StrOp};
+    match rvalue {
+        Rvalue::Use(op) | Rvalue::Length(op) => pure_operand(op),
+        Rvalue::Discriminant(place) => pure_place(place),
+        Rvalue::Unary(op, o) => *op != UnaryOp::Neg && pure_operand(o),
+        Rvalue::Binary(op, a, b) => {
+            matches!(
+                op,
+                BinOp::Eq
+                    | BinOp::Ne
+                    | BinOp::Lt
+                    | BinOp::Le
+                    | BinOp::Gt
+                    | BinOp::Ge
+                    | BinOp::BitAnd
+                    | BinOp::BitOr
+                    | BinOp::BitXor
+            ) && pure_operand(a)
+                && pure_operand(b)
+        }
+        Rvalue::Exact(_, a, b) => pure_operand(a) && pure_operand(b),
+        Rvalue::StrOp(StrOp::ByteLength | StrOp::ByteWithin | StrOp::Decode | StrOp::Next, args, _) => {
+            args.iter().all(pure_operand)
+        }
+        Rvalue::Call(Callee::Std(StdFn::Native(index)), args)
+            if matches!(NATIVES[*index as usize].name, "scalarWithin" | "byteWithin" | "asciiChar" | "charCode") =>
+        {
+            args.iter().all(pure_operand)
+        }
+        _ => false,
+    }
+}
+
+fn drop_dead_pure_in(body: &mut Body) {
+    if body.osr.is_some() || !body.starts.is_empty() || body.blocks.is_empty() {
+        return;
+    }
+    let count = body.locals.len();
+    let mut pinned = vec![false; count];
+    for &local in body.params.iter().chain(&body.ret) {
+        pinned[local.0 as usize] = true;
+    }
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        match statement {
+            Statement::Lend(alias, place) => {
+                pinned[alias.0 as usize] = true;
+                pinned[place.local.0 as usize] = true;
+            }
+            Statement::LendAt(alias, operand) => {
+                pinned[alias.0 as usize] = true;
+                if let Operand::Copy(place) = operand {
+                    pinned[place.local.0 as usize] = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    let (mut used_buf, mut def_buf) = (Vec::new(), Vec::new());
+    let mut uses = vec![0u32; count];
+    loop {
+        uses.fill(0);
+        for block in &body.blocks {
+            for statement in &block.stmts {
+                used_buf.clear();
+                def_buf.clear();
+                statement_locals(statement, &mut used_buf, &mut def_buf);
+                for &local in &used_buf {
+                    uses[local.0 as usize] += 1;
+                }
+            }
+            used_buf.clear();
+            terminator_uses(&block.terminator, &mut used_buf);
+            for &local in &used_buf {
+                uses[local.0 as usize] += 1;
+            }
+        }
+        let mut removed = false;
+        for block in &mut body.blocks {
+            let stmts = &block.stmts;
+            let mut drop_any = false;
+            for (at, statement) in stmts.iter().enumerate() {
+                if let Statement::Assign(place, rvalue, _) = statement
+                    && place.path.is_empty()
+                    && !pinned[place.local.0 as usize]
+                    && uses[place.local.0 as usize] == 0
+                    && pure_rvalue(rvalue)
+                    && !stmts.get(at + 1).is_some_and(|next| {
+                        matches!(next, Statement::Assign(_, r, _) if matches!(&**r, Rvalue::Unwinding | Rvalue::UnwindingOwn))
+                    })
+                {
+                    drop_any = true;
+                    break;
+                }
+            }
+            if !drop_any {
+                continue;
+            }
+            let old = std::mem::take(&mut block.stmts);
+            let mut kept = Vec::with_capacity(old.len());
+            for at in 0..old.len() {
+                let dead = matches!(
+                    &old[at],
+                    Statement::Assign(place, rvalue, _)
+                        if place.path.is_empty()
+                            && !pinned[place.local.0 as usize]
+                            && uses[place.local.0 as usize] == 0
+                            && pure_rvalue(rvalue)
+                            && !old.get(at + 1).is_some_and(|next| {
+                                matches!(next, Statement::Assign(_, r, _) if matches!(&**r, Rvalue::Unwinding | Rvalue::UnwindingOwn))
+                            })
+                );
+                if dead {
+                    removed = true;
+                } else {
+                    kept.push(old[at].clone());
+                }
+            }
+            block.stmts = kept;
+        }
+        if !removed {
+            break;
+        }
+    }
+}
