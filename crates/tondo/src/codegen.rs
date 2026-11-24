@@ -3896,6 +3896,9 @@ struct FnCodegen<'a, 'b> {
     unfixed: HashSet<u32>,
     /// The static array each local was given, by its whole assignment.
     statics: HashMap<Local, DataId>,
+    /// Remainder results by a non-power-of-two constant (`rem -> (dividend, |divisor|, signed)`),
+    /// so `x % d == 0` / `!= 0` can lower to a multiplicative-inverse range test.
+    rem_consts: HashMap<ir::Value, (ir::Value, u64, bool)>,
     /// Where an explicit panic keeps the numbers a dump shows, and which.
     keeping: Option<(ir::StackSlot, Vec<(Local, Variable)>)>,
     /// The block being built.
@@ -4194,6 +4197,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             assigning: None,
             unfixed: HashSet::new(),
             statics: HashMap::new(),
+            rem_consts: HashMap::new(),
             keeping,
             block: 0,
             probed: None,
