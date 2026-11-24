@@ -386,10 +386,63 @@ pub fn String.trimEnd(self, characters: String? = none): String {
 fn trimmed(text: String, characters: String?, ends: Int): String {
     match characters {
         some(set) => textNative.trim(text, set, false, ends)
-        // Nothing to take off: the text itself, without a copy.
-        none if textNative.untrimmed(text, ends) => text
-        none => textNative.trim(text, "", true, ends)
+        none => trimWhitespace(text, ends)
     }
+}
+
+/// `text` without Unicode's whitespace at the ends `ends` says (0 both,
+/// 1 start, 2 end): ASCII's a byte at a time, and from the first non-ASCII
+/// byte, the runtime's Unicode table.
+fn trimWhitespace(text: String, ends: Int): String {
+    let length = text.byteLength()
+    var start = 0
+    var end = length
+    if ends != 2 {
+        for start < end {
+            let b = textNative.byteAt(text, start)
+            if b > 32 {
+                if b >= 128 {
+                    return trimUnicode(text, ends)
+                }
+                break
+            }
+            if b == 32 or (b >= 9 and b <= 13) {
+                start += 1
+            } else {
+                break
+            }
+        }
+    }
+    if ends != 1 {
+        for end > start {
+            let b = textNative.byteAt(text, end - 1)
+            if b > 32 {
+                if b >= 128 {
+                    return trimUnicode(text, ends)
+                }
+                break
+            }
+            if b == 32 or (b >= 9 and b <= 13) {
+                end -= 1
+            } else {
+                break
+            }
+        }
+    }
+    if start == 0 and end == length {
+        return text
+    }
+    if start == end {
+        return ""
+    }
+    textNative.betweenWithin(text, start, end)
+}
+
+fn trimUnicode(text: String, ends: Int): String {
+    if textNative.untrimmed(text, ends) {
+        return text
+    }
+    textNative.trim(text, "", true, ends)
 }
 
 /// The text without `prefix` at its start, if it has it.

@@ -11,17 +11,19 @@ use crate::mir::*;
 use crate::types::{TyKind, Types};
 
 pub fn elide(bodies: &mut [Body], types: &Types) {
-    crate::parallel::each_mut(bodies, |body| {
-        // A chain of copies goes in one round; a second finds what the
-        // first made possible.
-        for _ in 0..2 {
-            if !elide_once(body, types) {
-                break;
-            }
+    crate::parallel::each_mut(bodies, |body| elide_one(body, types));
+}
+
+pub(crate) fn elide_one(body: &mut Body, types: &Types) {
+    // A chain of copies goes in one round; a second finds what the
+    // first made possible.
+    for _ in 0..2 {
+        if !elide_once(body, types) {
+            break;
         }
-        forward_captures(body, types);
-        signs(body, types);
-    });
+    }
+    forward_captures(body, types);
+    signs(body, types);
 }
 
 /// A comparison with zero of a `Float` converted from an `Int` compares the
@@ -433,7 +435,7 @@ fn pure_rvalue(rvalue: &Rvalue) -> bool {
     }
 }
 
-fn drop_dead_pure_in(body: &mut Body) {
+pub(crate) fn drop_dead_pure_in(body: &mut Body) {
     if body.osr.is_some() || !body.starts.is_empty() || body.blocks.is_empty() {
         return;
     }
@@ -531,4 +533,404 @@ fn drop_dead_pure_in(body: &mut Body) {
             break;
         }
     }
+}
+
+/// Folds `byteLength()` of a string sliced with `textNative.betweenWithin` into
+/// `end - start`, dropping the slice allocation and its paired `release` when
+/// the string is used for nothing else.
+pub fn fold_between_byte_length(bodies: &mut [Body], types: &Types) {
+    crate::parallel::each_mut(bodies, |body| {
+        fold_between_byte_length_in(body, types);
+    });
+}
+
+fn between_within_args(rvalue: &Rvalue) -> Option<(&Operand, &Operand, &Operand)> {
+    let Rvalue::Call(crate::hir::Callee::Std(crate::hir::StdFn::Native(index)), args) = rvalue else {
+        return None;
+    };
+    if crate::hir::NATIVES[*index as usize].name == "betweenWithin"
+        && let [s, start, end] = &args[..]
+    {
+        return Some((s, start, end));
+    }
+    None
+}
+
+fn is_unwinding_check(statement: &Statement) -> bool {
+    matches!(
+        statement,
+        Statement::Assign(place, rvalue, _)
+            if place.path.is_empty() && matches!(&**rvalue, Rvalue::Unwinding | Rvalue::UnwindingOwn)
+    )
+}
+
+pub(crate) fn fold_between_byte_length_in(body: &mut Body, types: &Types) -> bool {
+    use crate::ast::BinOp;
+    use crate::hir::StrOp;
+    use crate::types::Ty;
+    use std::collections::HashSet;
+
+    if body.osr.is_some() || !body.starts.is_empty() || body.blocks.is_empty() {
+        return false;
+    }
+    let mut has_between = false;
+    let mut has_byte_len = false;
+    for stmt in body.blocks.iter().flat_map(|b| &b.stmts) {
+        if let Statement::Assign(_, rvalue, _) = stmt {
+            if between_within_args(rvalue).is_some() {
+                has_between = true;
+            }
+            if matches!(&**rvalue, Rvalue::StrOp(StrOp::ByteLength, _, _)) {
+                has_byte_len = true;
+            }
+        }
+    }
+    if !has_between || !has_byte_len {
+        return false;
+    }
+
+    let n_blocks = body.blocks.len();
+    let mut reachable = vec![false; n_blocks];
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); n_blocks];
+    let mut stack = vec![0usize];
+    reachable[0] = true;
+    while let Some(b) = stack.pop() {
+        for next in successors(&body.blocks[b].terminator) {
+            preds[next].push(b);
+            if !reachable[next] {
+                reachable[next] = true;
+                stack.push(next);
+            }
+        }
+    }
+
+    let count = body.locals.len();
+    let mut eligible: Vec<bool> =
+        (0..count).map(|i| types.repr(body.locals[i]) == Ty::STRING && body.names[i].is_none()).collect();
+    for &l in body.params.iter().chain(&body.ret).chain(&body.arguments) {
+        eligible[l.0 as usize] = false;
+    }
+    for &(l, ..) in &body.scoped {
+        eligible[l.0 as usize] = false;
+    }
+
+    let mut has_release = vec![false; count];
+    let mut between_def = vec![false; count];
+    let mut byte_len_read = vec![false; count];
+    let mut copies: Vec<(usize, usize, Local, Local)> = Vec::new();
+    let mut retained_copy: HashSet<(usize, usize)> = HashSet::new();
+    let (mut used_buf, mut def_buf) = (Vec::new(), Vec::new());
+
+    for (b, block) in body.blocks.iter().enumerate() {
+        if !reachable[b] {
+            continue;
+        }
+        used_buf.clear();
+        terminator_uses(&block.terminator, &mut used_buf);
+        for &l in &used_buf {
+            eligible[l.0 as usize] = false;
+        }
+        let stmts = &block.stmts;
+        for (at, stmt) in stmts.iter().enumerate() {
+            match stmt {
+                Statement::Release(place) => {
+                    if place.path.is_empty() {
+                        has_release[place.local.0 as usize] = true;
+                    } else {
+                        used_buf.clear();
+                        def_buf.clear();
+                        statement_locals(stmt, &mut used_buf, &mut def_buf);
+                        for &l in used_buf.iter().chain(&def_buf) {
+                            eligible[l.0 as usize] = false;
+                        }
+                    }
+                }
+                Statement::Clear(_) => {}
+                Statement::Retain(place) => {
+                    let paired = place.path.is_empty()
+                        && at > 0
+                        && matches!(
+                            &stmts[at - 1],
+                            Statement::Assign(p, rv, _)
+                                if p.path.is_empty()
+                                    && p.local == place.local
+                                    && matches!(&**rv, Rvalue::Use(Operand::Copy(src)) if src.path.is_empty() && src.local != place.local)
+                        );
+                    if paired {
+                        retained_copy.insert((b, at - 1));
+                    } else {
+                        used_buf.clear();
+                        def_buf.clear();
+                        statement_locals(stmt, &mut used_buf, &mut def_buf);
+                        for &l in used_buf.iter().chain(&def_buf) {
+                            eligible[l.0 as usize] = false;
+                        }
+                    }
+                }
+                Statement::Assign(place, rvalue, _) => {
+                    if !place.path.is_empty() {
+                        used_buf.clear();
+                        def_buf.clear();
+                        statement_locals(stmt, &mut used_buf, &mut def_buf);
+                        for &l in used_buf.iter().chain(&def_buf) {
+                            eligible[l.0 as usize] = false;
+                        }
+                        continue;
+                    }
+                    let dst = place.local;
+                    match &**rvalue {
+                        Rvalue::Use(Operand::Copy(src)) if src.path.is_empty() => {
+                            if src.local == dst {
+                                eligible[dst.0 as usize] = false;
+                            } else {
+                                copies.push((b, at, dst, src.local));
+                            }
+                        }
+                        Rvalue::Use(Operand::Const(Const::Str(_))) => {}
+                        _ if between_within_args(rvalue).is_some() => {
+                            used_buf.clear();
+                            rvalue_uses(rvalue, &mut used_buf);
+                            for &l in &used_buf {
+                                eligible[l.0 as usize] = false;
+                            }
+                            if stmts.get(at + 1).is_some_and(is_unwinding_check)
+                                && !(at + 2 == stmts.len() && matches!(block.terminator, Terminator::Branch(..)))
+                            {
+                                eligible[dst.0 as usize] = false;
+                            }
+                            between_def[dst.0 as usize] = true;
+                        }
+                        Rvalue::StrOp(StrOp::ByteLength, args, _) if matches!(&args[..], [Operand::Copy(src)] if src.path.is_empty()) =>
+                        {
+                            if let Operand::Copy(src) = &args[0] {
+                                byte_len_read[src.local.0 as usize] = true;
+                            }
+                            eligible[dst.0 as usize] = false;
+                        }
+                        Rvalue::Call(..) | Rvalue::Concat(..) | Rvalue::StrOp(..) => {
+                            used_buf.clear();
+                            rvalue_uses(rvalue, &mut used_buf);
+                            for &l in &used_buf {
+                                eligible[l.0 as usize] = false;
+                            }
+                            if stmts.get(at + 1).is_some_and(is_unwinding_check) {
+                                let ok = at + 2 == stmts.len()
+                                    && matches!(
+                                        block.terminator,
+                                        Terminator::Branch(_, _, next) if preds[next.0 as usize].len() == 1
+                                    );
+                                if !ok {
+                                    eligible[dst.0 as usize] = false;
+                                }
+                            }
+                        }
+                        _ => {
+                            eligible[dst.0 as usize] = false;
+                            used_buf.clear();
+                            rvalue_uses(rvalue, &mut used_buf);
+                            for &l in &used_buf {
+                                eligible[l.0 as usize] = false;
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    used_buf.clear();
+                    def_buf.clear();
+                    statement_locals(stmt, &mut used_buf, &mut def_buf);
+                    for &l in used_buf.iter().chain(&def_buf) {
+                        eligible[l.0 as usize] = false;
+                    }
+                }
+            }
+        }
+    }
+
+    loop {
+        let mut changed = false;
+        for &(b, at, dst, src) in &copies {
+            let (d, s) = (dst.0 as usize, src.0 as usize);
+            if !eligible[d] && eligible[s] {
+                eligible[s] = false;
+                changed = true;
+            } else if eligible[d] && !eligible[s] && has_release[d] && !retained_copy.contains(&(b, at)) {
+                eligible[d] = false;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let mut parent: Vec<usize> = (0..count).collect();
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+    for &(_, _, dst, src) in &copies {
+        let (d, s) = (dst.0 as usize, src.0 as usize);
+        if eligible[d] && eligible[s] {
+            let (rd, rs) = (find(&mut parent, d), find(&mut parent, s));
+            if rd != rs {
+                parent[rd] = rs;
+            }
+        }
+    }
+
+    let mut comp_between = vec![false; count];
+    let mut comp_read = vec![false; count];
+    for i in 0..count {
+        if eligible[i] {
+            let r = find(&mut parent, i);
+            comp_between[r] |= between_def[i];
+            comp_read[r] |= byte_len_read[i];
+        }
+    }
+    let transform: Vec<bool> = (0..count)
+        .map(|i| {
+            if !eligible[i] {
+                return false;
+            }
+            let r = find(&mut parent, i);
+            comp_between[r] && comp_read[r]
+        })
+        .collect();
+    if !transform.iter().any(|&t| t) {
+        return false;
+    }
+
+    let mut len_of: Vec<Option<Local>> = vec![None; count];
+    for (i, &t) in transform.iter().enumerate() {
+        if t {
+            let local = Local(body.locals.len() as u32);
+            body.locals.push(Ty::INT);
+            body.names.push(None);
+            body.origins.push(Origin::Made(Vec::new(), 0));
+            len_of[i] = Some(local);
+        }
+    }
+
+    let mut prepend: Vec<Vec<Statement>> = vec![Vec::new(); n_blocks];
+    for (b, &is_reachable) in reachable.iter().enumerate() {
+        if !is_reachable {
+            continue;
+        }
+        let old = std::mem::take(&mut body.blocks[b].stmts);
+        let mut kept = Vec::with_capacity(old.len());
+        let mut at = 0;
+        while at < old.len() {
+            match &old[at] {
+                Statement::Release(p) if p.path.is_empty() && transform[p.local.0 as usize] => {
+                    at += 1;
+                    continue;
+                }
+                Statement::Clear(l) if transform[l.0 as usize] => {
+                    at += 1;
+                    continue;
+                }
+                Statement::Retain(p) if p.path.is_empty() && transform[p.local.0 as usize] => {
+                    at += 1;
+                    continue;
+                }
+                Statement::Assign(place, rvalue, span)
+                    if place.path.is_empty() && transform[place.local.0 as usize] =>
+                {
+                    let dst = place.local;
+                    let dl = len_of[dst.0 as usize].unwrap();
+                    let span = *span;
+                    match &**rvalue {
+                        Rvalue::Use(Operand::Copy(src)) if src.path.is_empty() && transform[src.local.0 as usize] => {
+                            let sl = len_of[src.local.0 as usize].unwrap();
+                            kept.push(Statement::Assign(
+                                Place::local(dl),
+                                Box::new(Rvalue::Use(Operand::local(sl))),
+                                span,
+                            ));
+                        }
+                        Rvalue::Use(Operand::Copy(src)) if src.path.is_empty() => {
+                            kept.push(Statement::Assign(
+                                Place::local(dl),
+                                Box::new(Rvalue::StrOp(StrOp::ByteLength, vec![Operand::Copy(src.clone())], span)),
+                                span,
+                            ));
+                        }
+                        Rvalue::Use(Operand::Const(Const::Str(s))) => {
+                            kept.push(Statement::Assign(
+                                Place::local(dl),
+                                Box::new(Rvalue::Use(Operand::Const(Const::Int(s.len() as i128, Ty::INT)))),
+                                span,
+                            ));
+                        }
+                        _ if between_within_args(rvalue).is_some() => {
+                            let (_, start, end) = between_within_args(rvalue).unwrap();
+                            kept.push(Statement::Assign(
+                                Place::local(dl),
+                                Box::new(Rvalue::Exact(BinOp::Sub, end.clone(), start.clone())),
+                                span,
+                            ));
+                            if old.get(at + 1).is_some_and(is_unwinding_check)
+                                && let Terminator::Branch(_, _, next) = body.blocks[b].terminator
+                            {
+                                body.blocks[b].terminator = Terminator::Goto(next);
+                                at += 2;
+                                continue;
+                            }
+                        }
+                        _ => {
+                            kept.push(old[at].clone());
+                            if old.get(at + 1).is_some_and(is_unwinding_check)
+                                && let Terminator::Branch(_, _, next) = body.blocks[b].terminator
+                            {
+                                kept.push(old[at + 1].clone());
+                                prepend[next.0 as usize].push(Statement::Assign(
+                                    Place::local(dl),
+                                    Box::new(Rvalue::StrOp(StrOp::ByteLength, vec![Operand::local(dst)], span)),
+                                    span,
+                                ));
+                                prepend[next.0 as usize].push(Statement::Release(Place::local(dst)));
+                                at += 2;
+                                continue;
+                            }
+                            kept.push(Statement::Assign(
+                                Place::local(dl),
+                                Box::new(Rvalue::StrOp(StrOp::ByteLength, vec![Operand::local(dst)], span)),
+                                span,
+                            ));
+                            kept.push(Statement::Release(Place::local(dst)));
+                        }
+                    }
+                }
+                Statement::Assign(place, rvalue, span)
+                    if matches!(
+                        &**rvalue,
+                        Rvalue::StrOp(StrOp::ByteLength, args, _)
+                            if matches!(&args[..], [Operand::Copy(src)] if src.path.is_empty() && transform[src.local.0 as usize])
+                    ) =>
+                {
+                    let Rvalue::StrOp(StrOp::ByteLength, args, _) = &**rvalue else { unreachable!() };
+                    let Operand::Copy(src) = &args[0] else { unreachable!() };
+                    let sl = len_of[src.local.0 as usize].unwrap();
+                    kept.push(Statement::Assign(place.clone(), Box::new(Rvalue::Use(Operand::local(sl))), *span));
+                }
+                other => kept.push(other.clone()),
+            }
+            at += 1;
+        }
+        body.blocks[b].stmts = kept;
+    }
+
+    for (b, mut extra) in prepend.into_iter().enumerate() {
+        if !extra.is_empty() {
+            extra.append(&mut body.blocks[b].stmts);
+            body.blocks[b].stmts = extra;
+        }
+    }
+    crate::mir_text::note(body, "fold between", || {
+        "byteLength of `betweenWithin` folded to `end - start`, dropping the slice".to_string()
+    });
+    true
 }

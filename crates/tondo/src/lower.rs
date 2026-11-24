@@ -259,12 +259,14 @@ pub(crate) fn may_panic(statement: &Statement) -> bool {
                     Rvalue::ArrayOp(hir::ArrayOp::New, ..) | Rvalue::MapOp(hir::MapOp::New, ..) => false,
                     Rvalue::Call(hir::Callee::Std(hir::StdFn::Number(op)), _) => op.may_panic(),
                     Rvalue::Call(hir::Callee::Std(hir::StdFn::Simd(op)), _) => op.may_panic(),
-                    // What codegen writes in place, which never panics.
-                    Rvalue::Call(hir::Callee::Std(hir::StdFn::Native(index)), _)
+                    // What codegen writes in place, which never panics, and
+                    // text slicing between byte offsets (`str_in`).
+                    Rvalue::Call(hir::Callee::Std(hir::StdFn::Native(index)), operands)
                         if hir::IN_ONE_INSTRUCTION.contains(&hir::NATIVES[*index as usize].symbol)
-                            || hir::IN_PLACE.contains(&hir::NATIVES[*index as usize].symbol) =>
+                            || hir::IN_PLACE.contains(&hir::NATIVES[*index as usize].symbol)
+                            || hir::NATIVES[*index as usize].symbol == "tondo_rt_text_between" =>
                     {
-                        false
+                        operands.iter().any(read)
                     }
                     Rvalue::Call(hir::Callee::Std(function), _) => !matches!(
                         function,
