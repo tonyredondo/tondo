@@ -20,7 +20,7 @@ const REACH: usize = 4000;
 
 pub fn moves(bodies: &mut [Body], types: &crate::types::Types, sources: &crate::source::SourceMap) {
     crate::parallel::each_mut(bodies, |body| {
-        moves_in(body);
+        moves_in(body, types);
         // The calls inlined from the standard library, whose bindings a dump
         // of the program's own code need not show.
         let standard: Vec<bool> =
@@ -29,7 +29,7 @@ pub fn moves(bodies: &mut [Body], types: &crate::types::Types, sources: &crate::
     });
 }
 
-fn moves_in(body: &mut Body) {
+fn moves_in(body: &mut Body, types: &crate::types::Types) {
     if !body.blocks.iter().flat_map(|block| &block.stmts).any(|s| matches!(s, Statement::Retain(_))) {
         return;
     }
@@ -62,7 +62,7 @@ fn moves_in(body: &mut Body) {
             body.blocks[block].stmts[at] = Statement::Moved(source);
         }
     }
-    drop_released_moves(body);
+    drop_released_moves(body, types);
 }
 
 /// A place reached only through fields and variants, which a zero written
@@ -348,15 +348,83 @@ fn drop_empty_values(body: &mut Body, types: &crate::types::Types, standard: &[b
     });
 }
 
-/// A whole local moved and then released, with nothing naming it in
-/// between or anywhere after: the release has nothing left to do, and the
-/// zero nothing to keep.
-fn drop_released_moves(body: &mut Body) {
+/// Whether `place` is the only field of an enum variant (including `Option`
+/// and `Result`) or of a record/tuple that needs dropping, so moving it leaves
+/// releasing the whole local as a no-op.
+fn sole_counted_part(types: &crate::types::Types, local_ty: crate::types::Ty, path: &[Proj]) -> bool {
+    match path {
+        [Proj::Variant(variant, field_index)] => {
+            let Some(variants) = types.variants(local_ty) else { return false };
+            let Some(fields) = variants.get(*variant as usize) else { return false };
+            (*field_index as usize) < fields.len()
+                && fields.iter().enumerate().all(|(i, &ty)| i == *field_index as usize || !types.needs_drop(ty))
+        }
+        [Proj::Field(field_index)] => {
+            let Some(fields) = types.components(local_ty) else { return false };
+            (*field_index as usize) < fields.len()
+                && fields.iter().enumerate().all(|(i, &ty)| i == *field_index as usize || !types.needs_drop(ty))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `local` is never read, modified in part, retained, released or lent
+/// on any forward path from `(block, from)` before being overwritten whole or
+/// cleared.
+fn dead_after(body: &Body, block: usize, from: usize, local: Local) -> bool {
+    let mut seen = vec![false; body.blocks.len()];
+    let mut work = vec![(block, from)];
+    while let Some((b, start)) = work.pop() {
+        let data = &body.blocks[b];
+        let mut overwritten = false;
+        for statement in data.stmts.iter().skip(start) {
+            let (mut used, mut defined) = (Vec::new(), Vec::new());
+            statement_locals(statement, &mut used, &mut defined);
+            if matches!(statement, Statement::Clear(cleared) if *cleared == local) {
+                overwritten = true;
+                break;
+            }
+            if let Statement::Assign(target, _, _) = statement
+                && target.local == local
+                && target.path.is_empty()
+                && !used.contains(&local)
+            {
+                overwritten = true;
+                break;
+            }
+            if used.contains(&local) || defined.contains(&local) {
+                return false;
+            }
+        }
+        if overwritten {
+            continue;
+        }
+        let mut used = Vec::new();
+        terminator_uses(&data.terminator, &mut used);
+        if used.contains(&local) {
+            return false;
+        }
+        for next in successors(&data.terminator) {
+            if !seen[next] {
+                seen[next] = true;
+                work.push((next, 0));
+            }
+        }
+    }
+    true
+}
+
+/// Drops releases of locals whose whole value or sole counted part has already
+/// been moved out (or cleared) on every reachable path to the release, and
+/// drops zeroing moves whose local is dead on every path forward.
+fn drop_released_moves(body: &mut Body, types: &crate::types::Types) {
     let names = |statement: &Statement, local: Local| {
         let (mut used, mut defined) = (Vec::new(), Vec::new());
         statement_locals(statement, &mut used, &mut defined);
         used.contains(&local) || defined.contains(&local)
     };
+    // First keep the exact whole-local same-block removal (so dead single-use
+    // whole-local moves + releases disappear together cleanly).
     for block in 0..body.blocks.len() {
         let mut at = 0;
         while at < body.blocks[block].stmts.len() {
@@ -371,7 +439,6 @@ fn drop_released_moves(body: &mut Body) {
                 .position(|statement| names(statement, local))
                 .map(|index| at + 1 + index)
                 .filter(|&index| matches!(&statements[index], Statement::Release(r) if *r == Place::local(local)));
-            // Named in no other block, nor after the release in this one.
             let elsewhere = |body: &Body, release: usize| {
                 body.blocks.iter().enumerate().any(|(index, data)| {
                     let statements = if index == block { &data.stmts[release + 1..] } else { &data.stmts[..] };
@@ -386,6 +453,187 @@ fn drop_released_moves(body: &mut Body) {
                     body.blocks[block].stmts.remove(at);
                 }
                 _ => at += 1,
+            }
+        }
+    }
+
+    // Forward must-analysis across reachable blocks: a bit is set when every
+    // reachable path to this point has moved out the local's whole value or
+    // sole counted part (or cleared it) without writing it since.
+    let count = body.locals.len();
+    if count == 0 || body.blocks.is_empty() {
+        return;
+    }
+    let mut tracked = vec![true; count];
+    for &param in &body.params {
+        tracked[param.0 as usize] = false;
+    }
+    if let Some(ret) = body.ret {
+        tracked[ret.0 as usize] = false;
+    }
+    for (i, &ty) in body.locals.iter().enumerate() {
+        if !types.needs_drop(ty) {
+            tracked[i] = false;
+        }
+    }
+    let mut any_moved = false;
+    for data in &body.blocks {
+        for statement in &data.stmts {
+            match statement {
+                Statement::Lend(alias, place) => {
+                    tracked[alias.0 as usize] = false;
+                    tracked[place.local.0 as usize] = false;
+                }
+                Statement::LendAt(alias, _) => tracked[alias.0 as usize] = false,
+                Statement::DeferPush(_, place) => tracked[place.local.0 as usize] = false,
+                Statement::Moved(place) if tracked[place.local.0 as usize] => any_moved = true,
+                _ => {}
+            }
+        }
+    }
+    if !any_moved {
+        return;
+    }
+
+    let n_blocks = body.blocks.len();
+    let mut reachable = vec![false; n_blocks];
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); n_blocks];
+    let mut stack = vec![0usize];
+    reachable[0] = true;
+    while let Some(b) = stack.pop() {
+        for next in successors(&body.blocks[b].terminator) {
+            preds[next].push(b);
+            if !reachable[next] {
+                reachable[next] = true;
+                stack.push(next);
+            }
+        }
+    }
+
+    let words = count.div_ceil(64);
+    let set_bit = |bits: &mut [u64], local: Local| {
+        let idx = local.0 as usize;
+        bits[idx / 64] |= 1u64 << (idx % 64);
+    };
+    let clear_bit = |bits: &mut [u64], local: Local| {
+        let idx = local.0 as usize;
+        bits[idx / 64] &= !(1u64 << (idx % 64));
+    };
+    let has_bit = |bits: &[u64], local: Local| -> bool {
+        let idx = local.0 as usize;
+        (bits[idx / 64] & (1u64 << (idx % 64))) != 0
+    };
+    let transfer = |state: &mut Vec<u64>, statement: &Statement| match statement {
+        Statement::Moved(place)
+            if tracked[place.local.0 as usize]
+                && (place.path.is_empty()
+                    || sole_counted_part(types, body.locals[place.local.0 as usize], &place.path)) =>
+        {
+            set_bit(state, place.local);
+        }
+        Statement::Clear(local) if tracked[local.0 as usize] => set_bit(state, *local),
+        Statement::Assign(place, rvalue, _) => {
+            clear_bit(state, place.local);
+            match &**rvalue {
+                Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) => clear_bit(state, target.local),
+                Rvalue::Select(cases, ..) => {
+                    for case in cases {
+                        clear_bit(state, case.out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Statement::Retain(place) => clear_bit(state, place.local),
+        Statement::OsrLoad(_) => state.fill(0),
+        _ => {}
+    };
+
+    let mut entry: Vec<Vec<u64>> = vec![vec![0; words]; n_blocks];
+    let mut exit: Vec<Option<Vec<u64>>> = vec![None; n_blocks];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for b in 0..n_blocks {
+            if !reachable[b] {
+                continue;
+            }
+            let mut cur = if b == 0 {
+                vec![0u64; words]
+            } else {
+                let mut acc: Option<Vec<u64>> = None;
+                for &p in &preds[b] {
+                    if let Some(p_exit) = &exit[p] {
+                        match &mut acc {
+                            None => acc = Some(p_exit.clone()),
+                            Some(bits) => {
+                                for (a, &e) in bits.iter_mut().zip(p_exit) {
+                                    *a &= e;
+                                }
+                            }
+                        }
+                    }
+                }
+                let Some(acc) = acc else { continue };
+                acc
+            };
+            entry[b].clone_from(&cur);
+            for statement in &body.blocks[b].stmts {
+                transfer(&mut cur, statement);
+            }
+            if exit[b].as_ref() != Some(&cur) {
+                exit[b] = Some(cur);
+                changed = true;
+            }
+        }
+    }
+
+    let mut dropped_releases = 0usize;
+    for b in 0..n_blocks {
+        if !reachable[b] {
+            continue;
+        }
+        let mut cur = entry[b].clone();
+        let mut keep = Vec::with_capacity(body.blocks[b].stmts.len());
+        for statement in &body.blocks[b].stmts {
+            let dead = matches!(statement, Statement::Release(r) if r.path.is_empty() && has_bit(&cur, r.local));
+            keep.push(!dead);
+            if dead {
+                dropped_releases += 1;
+            } else {
+                transfer(&mut cur, statement);
+            }
+        }
+        if keep.iter().any(|&k| !k) {
+            let mut it = keep.into_iter();
+            body.blocks[b].stmts.retain(|_| it.next().unwrap());
+        }
+    }
+
+    if dropped_releases == 0 {
+        return;
+    }
+
+    // Any partial `Moved` whose local is now dead on every forward path no
+    // longer needs to zero the payload slot either.
+    for b in 0..n_blocks {
+        if !reachable[b] {
+            continue;
+        }
+        let mut at = 0;
+        while at < body.blocks[b].stmts.len() {
+            let drop_move = matches!(
+                &body.blocks[b].stmts[at],
+                Statement::Moved(place)
+                    if !place.path.is_empty()
+                        && tracked[place.local.0 as usize]
+                        && sole_counted_part(types, body.locals[place.local.0 as usize], &place.path)
+                        && dead_after(body, b, at + 1, place.local)
+            );
+            if drop_move {
+                body.blocks[b].stmts.remove(at);
+            } else {
+                at += 1;
             }
         }
     }
