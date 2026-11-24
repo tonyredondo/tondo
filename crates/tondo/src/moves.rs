@@ -589,8 +589,8 @@ fn drop_released_moves(body: &mut Body, types: &crate::types::Types) {
     }
 
     let mut dropped_releases = 0usize;
-    for b in 0..n_blocks {
-        if !reachable[b] {
+    for (b, &is_reachable) in reachable.iter().enumerate() {
+        if !is_reachable {
             continue;
         }
         let mut cur = entry[b].clone();
@@ -616,8 +616,8 @@ fn drop_released_moves(body: &mut Body, types: &crate::types::Types) {
 
     // Any partial `Moved` whose local is now dead on every forward path no
     // longer needs to zero the payload slot either.
-    for b in 0..n_blocks {
-        if !reachable[b] {
+    for (b, &is_reachable) in reachable.iter().enumerate() {
+        if !is_reachable {
             continue;
         }
         let mut at = 0;

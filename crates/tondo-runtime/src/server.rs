@@ -1498,10 +1498,13 @@ pub extern "C" fn tondo_rt_http_request_headers(
 /// A frame of a request's body, or its end.
 type BodyFrame = Option<Result<Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>>;
 
+/// Shared state of a request body once a read waits asynchronously.
+type SharedBody = (Option<http_body_util::Limited<Idle>>, Option<BodyFrame>);
+
 /// A request's body, kept directly until a read must wait asynchronously.
 enum BodySlot {
     Direct(Option<http_body_util::Limited<Idle>>),
-    Shared(Arc<Mutex<(Option<http_body_util::Limited<Idle>>, Option<BodyFrame>)>>),
+    Shared(Arc<Mutex<SharedBody>>),
 }
 
 /// A request's body as the host of a stream, which waits for the body with
