@@ -150,6 +150,11 @@ pub(crate) struct Held(*mut Table);
 
 impl Held {
     pub(crate) const NONE: Held = Held(std::ptr::null_mut());
+
+    #[inline]
+    pub(crate) fn is_none(&self) -> bool {
+        self.0.is_null()
+    }
 }
 
 impl Drop for Held {
@@ -391,11 +396,18 @@ fn table(held: Option<&Held>) -> *mut Table {
 
 /// What a task it spawns starts with: a share of the running task's table.
 pub(crate) fn inherited() -> Held {
-    let Some(held) = current() else { return Held::NONE };
-    if !held.0.is_null() {
-        unsafe { (*held.0).count.fetch_add(1, Ordering::Relaxed) };
+    let Some(task) = (unsafe { crate::tasks::current().as_ref() }) else { return Held::NONE };
+    inherited_from(task)
+}
+
+/// `inherited`, for a parent task already read.
+#[inline]
+pub(crate) fn inherited_from(task: &crate::tasks::Task) -> Held {
+    let table = task.context.0;
+    if !table.is_null() {
+        unsafe { (*table).count.fetch_add(1, Ordering::Relaxed) };
     }
-    Held(held.0)
+    Held(table)
 }
 
 /// The `Ref` of a context's value where the task runs, which its table
@@ -518,8 +530,12 @@ fn deadline() -> Option<Instant> {
 }
 
 /// The running task's deadline for a task it spawns, which reads it.
-pub(crate) fn deadline_nanos() -> u64 {
-    deadline().map_or(u64::MAX, |at| at.saturating_duration_since(base()).as_nanos() as u64)
+#[inline]
+pub(crate) fn deadline_nanos_of(task: &crate::tasks::Task) -> u64 {
+    if let Some(&(at, ..)) = task.withins.last() {
+        return at.saturating_duration_since(base()).as_nanos() as u64;
+    }
+    task.inherited.load(Ordering::Acquire)
 }
 
 /// `within limit { ... }` starts: its deadline is the nearer of `limit`

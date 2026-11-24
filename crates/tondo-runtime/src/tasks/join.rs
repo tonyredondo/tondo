@@ -41,7 +41,7 @@ impl Waiters {
 pub struct JoinObject {
     pub(super) rc: AtomicUsize,
     pub(super) lock: AtomicBool,
-    pub(super) done: bool,
+    pub(super) done: AtomicBool,
     pub(super) taken: bool,
     /// The tag of a result that failed, when the result is `T ! E`, or -1;
     /// and whether it is among `UNREAD`. In what would be padding.
@@ -194,8 +194,72 @@ pub(super) fn free_blocks(blocks: *mut Vec<*mut Spawned>, own: bool) {
     }
 }
 
-/// How many blocks a thread keeps.
-const SPARE_BLOCK_LIMIT: usize = 64;
+/// How many blocks a thread keeps before spilling a batch to `SHARED_BLOCKS`.
+const SPARE_BLOCK_LIMIT: usize = 256;
+const SPARE_BLOCK_BATCH: usize = 128;
+const SHARED_BLOCK_BATCHES: usize = 16;
+
+struct BlockBatch(Vec<*mut Spawned>);
+
+// Raw pointers to unreferenced, uninitialized `Spawned` allocations traded
+// between threads under `SHARED_BLOCKS`.
+unsafe impl Send for BlockBatch {}
+
+/// Batches of spare `Spawned` blocks traded between threads so bursts of
+/// spawns (or tasks finished on other workers) reuse warm memory without
+/// hitting the allocator.
+static SHARED_BLOCKS: Mutex<Vec<BlockBatch>> = Mutex::new(Vec::new());
+
+/// Frees every shared spare block, at a library's end.
+pub(super) fn clear_shared_blocks() {
+    let layout = std::alloc::Layout::new::<Spawned>();
+    let batches = std::mem::take(&mut *SHARED_BLOCKS.lock().unwrap_or_else(|e| e.into_inner()));
+    for batch in batches {
+        for block in batch.0 {
+            unsafe { std::alloc::dealloc(block.cast(), layout) };
+        }
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn take_block() -> *mut Spawned {
+    if let Some(mut batch) = SHARED_BLOCKS.lock().unwrap_or_else(|e| e.into_inner()).pop()
+        && let Some(block) = batch.0.pop()
+    {
+        if !batch.0.is_empty() {
+            let spare = spare_blocks();
+            if spare.is_empty() {
+                *spare = batch.0;
+            } else {
+                spare.extend(batch.0);
+            }
+        }
+        return block;
+    }
+    let layout = std::alloc::Layout::new::<Spawned>();
+    let ptr = unsafe { std::alloc::alloc(layout) } as *mut Spawned;
+    if ptr.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+    ptr
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn push_spare_block(spare: &mut Vec<*mut Spawned>, block: *mut Spawned) {
+    let mut shared = SHARED_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    if shared.len() < SHARED_BLOCK_BATCHES {
+        let split = spare.len().saturating_sub(SPARE_BLOCK_BATCH);
+        let batch = spare.split_off(split);
+        shared.push(BlockBatch(batch));
+        drop(shared);
+        spare.push(block);
+    } else {
+        drop(shared);
+        unsafe { std::alloc::dealloc(block.cast(), std::alloc::Layout::new::<Spawned>()) };
+    }
+}
 
 /// Lets go of a spawned task's block for the program or for the task; the
 /// last frees it, or keeps it for the next spawn.
@@ -214,7 +278,7 @@ pub(super) unsafe fn let_go(join: *mut JoinObject) {
         if spare.len() < SPARE_BLOCK_LIMIT {
             spare.push(block);
         } else {
-            std::alloc::dealloc(block.cast(), std::alloc::Layout::new::<Spawned>());
+            push_spare_block(spare, block);
         }
     }
 }
@@ -242,16 +306,26 @@ pub unsafe extern "C" fn tondo_rt_spawn(
     };
     let align = align.max(8);
     LIVE_OBJECTS.made();
-    let spawned = Spawned {
-        join: JoinObject {
+    let spare = SPARE_BLOCKS.with(Cell::get);
+    let block = match unsafe { spare.as_mut() }.and_then(Vec::pop) {
+        Some(block) => block,
+        None => take_block(),
+    };
+    let join = block as *mut JoinObject;
+    unsafe {
+        join.write(JoinObject {
             rc: AtomicUsize::new(1),
             lock: AtomicBool::new(false),
-            done: false,
+            done: AtomicBool::new(false),
             taken: false,
             failed,
             unread: false,
             waiters: Waiters::default(),
-            result: std::ptr::null_mut(),
+            result: match size {
+                0 => std::ptr::null_mut(),
+                _ if size <= 16 && align <= 8 => (&raw mut (*block).result).cast(),
+                _ => std::alloc::alloc(std::alloc::Layout::from_size_align(size, align).unwrap()),
+            },
             size,
             align,
             release,
@@ -263,25 +337,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
             holders: AtomicU8::new(2),
             panic: None,
             show,
-        },
-        task: std::mem::MaybeUninit::uninit(),
-        result: [0; 2],
-    };
-    let spare = SPARE_BLOCKS.with(Cell::get);
-    let block = match unsafe { spare.as_mut() }.and_then(Vec::pop) {
-        Some(block) => unsafe {
-            block.write(spawned);
-            block
-        },
-        None => Box::into_raw(Box::new(spawned)),
-    };
-    let join = block as *mut JoinObject;
-    unsafe {
-        (*join).result = match size {
-            0 => std::ptr::null_mut(),
-            _ if size <= 16 && align <= 8 => (&raw mut (*block).result).cast(),
-            _ => std::alloc::alloc(std::alloc::Layout::from_size_align(size, align).unwrap()),
-        };
+        });
     }
     if visit.is_some() {
         cycles::remember(join as *const u8, Kind::Join);
@@ -294,33 +350,36 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         3 => ResultKind::Float32,
         _ => ResultKind::Memory,
     };
-    let task = new_task(current(), None, body, code, kind, join, unsafe { (&raw mut (*block).task).cast() }, None);
+    let (parent, own_next) = worker(|w| (w.current.get(), w.own_next.get()));
+    let id = TASK_IDS.fetch_add(1, Ordering::Relaxed);
+    let task = new_task(parent, id, None, body, code, kind, join, unsafe { (&raw mut (*block).task).cast() }, None);
     unsafe {
         (*join).task = task;
         (*task).limits = places;
-        let spawned = crate::trace::spawned(origin());
+        let bounds = stack_bounds_of(parent).unwrap_or((0, 0));
+        let spawned = crate::trace::spawned(origin_of(parent), bounds);
         tools::spawned(task, code, spawned);
-        if let Some(parent) = current().as_ref().filter(|parent| parent.flight != 0) {
+        if let Some(parent) = parent.as_ref().filter(|parent| parent.flight != 0) {
             (*task).flight = parent.flight;
             let did = crate::diagnostics::Did::Spawned((*task).id);
             crate::diagnostics::step(parent.flight, parent.id, did, spawned.frames().to_vec());
         }
         (*task).origin = Some(spawned);
     }
-    enqueue(task);
+    enqueue_from(task, !parent.is_null(), own_next);
     may_switch();
     join
 }
 
 /// Marks the task done and notifies whoever waits for it. The group hears
-/// of it under the join's lock, so nobody sees the task done, and frees the
-/// group, before that. True when the task was detached.
+/// of it under the join's lock, and before `done` becomes visible, so
+/// nobody sees the task done, and frees the group, before that. True when
+/// the task was detached.
 pub(super) unsafe fn complete(join: *mut JoinObject) -> bool {
     unsafe {
         tools::ended(join as usize);
         let j = &mut *join;
         lock(&j.lock);
-        j.done = true;
         let detached = j.detached;
         // Most often one task to wake, kept in place.
         let (mut first, mut rest): (Option<*mut Task>, Vec<*mut Task>) = (None, Vec::new());
@@ -338,6 +397,7 @@ pub(super) unsafe fn complete(join: *mut JoinObject) -> bool {
         {
             woken(task);
         }
+        j.done.store(true, Ordering::Release);
         unlock(&j.lock);
         first.into_iter().chain(rest).for_each(notify);
         detached
@@ -364,7 +424,7 @@ pub unsafe extern "C" fn tondo_rt_join_detach(join: *mut JoinObject) {
         let j = &mut *join;
         let mut detached = DETACHED.lock().unwrap_or_else(|e| e.into_inner());
         lock(&j.lock);
-        if !j.done {
+        if !j.done.load(Ordering::Relaxed) {
             j.detached = true;
             j.rc.fetch_add(1, Ordering::Relaxed);
             detached.push(join as usize);
@@ -407,10 +467,13 @@ pub(super) fn end_detached() {
 pub(super) unsafe fn finish(join: *mut JoinObject, fully: bool) -> bool {
     unsafe {
         let j = &mut *join;
+        if !tools::listens(tools::RACES) && j.done.load(Ordering::Acquire) {
+            return true;
+        }
         // It comes after the task whenever it asks, which makes no difference.
         tools::note(|| format!("h {}\n", &raw const j.lock as usize));
         lock_unseen(&j.lock);
-        if j.done {
+        if j.done.load(Ordering::Relaxed) {
             unlock(&j.lock);
             return true;
         }
@@ -436,7 +499,7 @@ pub(super) unsafe fn cancel_join(join: *mut JoinObject) {
     unsafe {
         let j = &mut *join;
         lock(&j.lock);
-        if !j.done {
+        if !j.done.load(Ordering::Relaxed) {
             cancel_task(j.task);
         }
         unlock(&j.lock);
@@ -529,7 +592,7 @@ pub unsafe extern "C" fn tondo_rt_join_release(join: *mut JoinObject) {
 /// running holds its join.
 pub(crate) unsafe fn visit_join(visitor: &mut Visitor, join: *mut u8) {
     let j = unsafe { &*(join as *const JoinObject) };
-    if !j.done {
+    if !j.done.load(Ordering::Relaxed) {
         visitor.hold();
     } else if !j.taken {
         unsafe { visitor.visit(j.visit, j.result) };
@@ -539,7 +602,7 @@ pub(crate) unsafe fn visit_join(visitor: &mut Visitor, join: *mut u8) {
 /// Takes the result out of a garbage join.
 pub(crate) unsafe fn clear_join(join: *mut u8) -> Option<Taken> {
     let j = unsafe { &mut *(join as *mut JoinObject) };
-    if !j.done || j.taken {
+    if !j.done.load(Ordering::Relaxed) || j.taken {
         return None;
     }
     let release = j.release?;
@@ -568,10 +631,12 @@ pub(super) unsafe fn free_join(join: *mut JoinObject) {
         }
         // A cancelled task cancels the tasks it still owns (11.15), and so
         // does one that unwinds from a panic (language 15.9).
-        if cancelled() || crate::panics::cleaning() {
-            cancel_join(join);
+        if tools::listens(tools::RACES) || !(*join).done.load(Ordering::Acquire) {
+            if cancelled() || crate::panics::cleaning() {
+                cancel_join(join);
+            }
+            finish(join, true);
         }
-        finish(join, true);
         if let Some(panic) = (*join).panic.take() {
             crate::panics::rethrow(panic);
         }
@@ -583,5 +648,17 @@ pub(super) unsafe fn free_join(join: *mut JoinObject) {
         }
         LIVE_OBJECTS.gone();
         let_go(join);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Spawned;
+
+    /// A spawned task's combined join, task and inline result stays within
+    /// the 640-byte allocator size class documented on `Task`.
+    #[test]
+    fn spawned_block_fits_in_640_bytes() {
+        assert!(std::mem::size_of::<Spawned>() <= 640, "Spawned grew to {} bytes", std::mem::size_of::<Spawned>());
     }
 }

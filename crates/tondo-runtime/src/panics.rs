@@ -343,9 +343,18 @@ impl Owner {
 }
 
 /// The `recover` a task started now belongs to: the innermost one the
-/// running task runs, or the one that task belongs to.
-pub(crate) fn owner_of_new() -> Option<Arc<Owner>> {
-    let task = task()?;
+/// parent task runs, or the one that task belongs to.
+#[inline]
+pub(crate) fn owner_of_new_from(task: &mut Task) -> Option<Arc<Owner>> {
+    if task.recovers.is_empty() && task.owner.is_none() {
+        return None;
+    }
+    owner_of_new_slow(task)
+}
+
+#[cold]
+#[inline(never)]
+fn owner_of_new_slow(task: &mut Task) -> Option<Arc<Owner>> {
     let at = task as *mut Task as usize;
     match task.recovers.last_mut() {
         Some(owner) => {

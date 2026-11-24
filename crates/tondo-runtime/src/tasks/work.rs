@@ -434,11 +434,12 @@ fn lets_one_go(next: &Next, queue: &mut Queue) -> bool {
 /// Runs a task on this thread until it waits, yields or ends; a task that
 /// ends is freed.
 pub(super) fn run(task: *mut Task) {
-    worker(|w| {
+    let (home, runner) = worker(|w| {
         w.current.set(task);
         if let Some(next) = w.own_next.get() {
             next.turns.store(next.turns.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
         }
+        (std::hint::black_box(w.home.as_ptr()), w.runner.get())
     });
     let traced = tools::running(task);
     unsafe {
@@ -448,9 +449,10 @@ pub(super) fn run(task: *mut Task) {
             (*task).stack = Some(stack);
         }
     }
-    enter_tondo();
-    unsafe { switch(home(), (*task).sp) };
-    leave_tondo();
+    let runner = runner.unwrap_or_else(running_here);
+    enter_tondo_with(runner);
+    unsafe { switch(home, (*task).sp) };
+    leave_tondo_with(runner);
     // A worker the monitor started another beside lets one go as its task
     // leaves it.
     let (yielded, held) = worker(|w| {
@@ -483,7 +485,7 @@ pub(super) fn run(task: *mut Task) {
             Wait::left(&mut *task);
             left_held(&mut *task);
             unregister(task);
-            (*task).mark = 0;
+            (*task).mark.store(0, Ordering::Relaxed);
             // A spawned task lives in its join's block.
             if join.is_null() {
                 drop(Box::from_raw(task));

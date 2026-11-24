@@ -26,11 +26,46 @@ pub fn wait_foreign_calls() {
     }
 }
 
+/// Bits of `Kept::calling`: `CALL_ACTIVE` while a call of C's runs on this
+/// thread's stack (`Task::native`), and `CALL_INSPECTED` while `tasks()`
+/// holds a view of that task so the thread waits before resetting or freeing
+/// it.
+pub(super) const CALL_ACTIVE: u8 = 1;
+pub(super) const CALL_INSPECTED: u8 = 2;
+
 /// Whether a call of C's runs on its thread's stack (`Task::native`), which
 /// each thread counts for itself.
 fn calls_on_their_stacks() -> bool {
     let every = EVERY_KEPT.lock().unwrap_or_else(|e| e.into_inner());
-    every.iter().any(|&kept| unsafe { &*(kept as *const Kept) }.calling.load(Ordering::Acquire))
+    every.iter().any(|&kept| unsafe { &*(kept as *const Kept) }.calling.load(Ordering::Acquire) & CALL_ACTIVE != 0)
+}
+
+/// Pins every currently running native C-thread callback task for `tasks()`,
+/// returning each thread's `Kept` and live `Task` address until
+/// `release_native_tasks` unpins them.
+pub(super) fn active_native_tasks() -> Vec<(*const Kept, usize)> {
+    let every = EVERY_KEPT.lock().unwrap_or_else(|e| e.into_inner());
+    let mut active = Vec::new();
+    for &addr in every.iter() {
+        let kept = unsafe { &*(addr as *const Kept) };
+        if kept.calling.load(Ordering::Acquire) & CALL_ACTIVE == 0 {
+            continue;
+        }
+        let prev = kept.calling.fetch_add(CALL_INSPECTED, Ordering::AcqRel);
+        if prev & CALL_ACTIVE != 0 {
+            active.push((kept as *const Kept, kept.call.load(Ordering::Relaxed) as usize));
+        } else {
+            kept.calling.fetch_sub(CALL_INSPECTED, Ordering::Release);
+        }
+    }
+    active
+}
+
+/// Unpins the native C-thread callback tasks pinned by `active_native_tasks`.
+pub(super) fn release_native_tasks(natives: &[(*const Kept, usize)]) {
+    for &(kept, _) in natives {
+        unsafe { (*kept).calling.fetch_sub(CALL_INSPECTED, Ordering::Release) };
+    }
 }
 
 /// The next thread's shard of the registry.
@@ -54,10 +89,12 @@ impl Kept {
     /// This thread's block for a call of C's that runs on its stack, made
     /// once.
     pub(super) fn call_block(&self) -> *mut Task {
-        if self.call.get().is_null() {
-            self.call.set(Box::into_raw(Box::new(std::mem::MaybeUninit::uninit())));
+        let mut block = self.call.load(Ordering::Relaxed);
+        if block.is_null() {
+            block = Box::into_raw(Box::new(std::mem::MaybeUninit::uninit()));
+            self.call.store(block, Ordering::Relaxed);
         }
-        self.call.get() as *mut Task
+        block as *mut Task
     }
 
     /// Looks up the bounds of this thread's own stack, where a call of C's
@@ -347,9 +384,11 @@ pub(crate) struct Kept {
     /// The bounds of the thread's own stack, once looked up.
     own_stack: Cell<(usize, usize)>,
     /// The block a call of C's on its stack is a task in, from one call to
-    /// the next (`Task::native`), and whether one runs now.
-    call: Cell<*mut std::mem::MaybeUninit<Task>>,
-    pub(super) calling: AtomicBool,
+    /// the next (`Task::native`), whether `call` holds an initialized `Task`
+    /// ready for reuse, and its active/inspected state bits.
+    pub(super) call: AtomicPtr<std::mem::MaybeUninit<Task>>,
+    pub(super) call_ready: Cell<bool>,
+    pub(super) calling: AtomicU8,
     /// The numbers its calls take next, from a run the others do not.
     ids: Cell<(u64, u64)>,
     /// Its shard of the registry (`native`).
@@ -388,44 +427,58 @@ static EVERY_KEPT: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 pub(crate) fn kept() -> &'static Kept {
     let mut kept = KEPT.with(Cell::get);
     if kept.is_null() {
-        let new = Kept {
-            signal: Cell::new(std::ptr::null_mut()),
-            guarded: Cell::new(false),
-            stacks: Cell::new(std::ptr::null_mut()),
-            blocks: Cell::new(std::ptr::null_mut()),
-            ends: Cell::new(Vec::new()),
-            generation: Cell::new(0),
-            own_stack: Cell::new((0, 0)),
-            call: Cell::new(std::ptr::null_mut()),
-            calling: AtomicBool::new(false),
-            ids: Cell::new((0, 0)),
-            shard: (SHARD_TURN.fetch_add(1, Ordering::Relaxed) % SHARDS) as u8,
-            // What the thread was given before this.
-            runner: Cell::new(worker(|w| w.runner.get())),
-            in_c: Cell::new(worker(|w| w.in_c.get())),
-            waits: Cell::new(worker(|w| w.waits.get())),
-            helds: Cell::new(worker(|w| w.helds.get())),
-            turns: Cell::new(worker(|w| w.turns.get())),
-            events: Cell::new(worker(|w| w.events.get())),
-            chunks: Cell::new(std::ptr::null_mut()),
-        };
-        kept = Box::into_raw(Box::new(new));
-        KEPT.with(|cell| cell.set(kept));
-        EVERY_KEPT.lock().unwrap_or_else(|e| e.into_inner()).push(kept as usize);
+        kept = init_kept();
     }
     let kept = unsafe { &*kept };
     let generation = GENERATION.load(Ordering::Acquire);
     if kept.generation.get() != generation {
-        let mut key = KEY.lock().unwrap_or_else(|e| e.into_inner());
-        let key = *key.get_or_insert_with(|| {
-            let mut key = 0;
-            unsafe { libc::pthread_key_create(&mut key, Some(thread_ended)) };
-            key
-        });
-        unsafe { libc::pthread_setspecific(key, kept as *const Kept as *const libc::c_void) };
-        kept.generation.set(generation);
+        register_kept(kept, generation);
     }
     kept
+}
+
+#[cold]
+#[inline(never)]
+fn init_kept() -> *mut Kept {
+    let new = Kept {
+        signal: Cell::new(std::ptr::null_mut()),
+        guarded: Cell::new(false),
+        stacks: Cell::new(std::ptr::null_mut()),
+        blocks: Cell::new(std::ptr::null_mut()),
+        ends: Cell::new(Vec::new()),
+        generation: Cell::new(0),
+        own_stack: Cell::new((0, 0)),
+        call: AtomicPtr::new(std::ptr::null_mut()),
+        call_ready: Cell::new(false),
+        calling: AtomicU8::new(0),
+        ids: Cell::new((0, 0)),
+        shard: (SHARD_TURN.fetch_add(1, Ordering::Relaxed) % SHARDS) as u8,
+        // What the thread was given before this.
+        runner: Cell::new(worker(|w| w.runner.get())),
+        in_c: Cell::new(worker(|w| w.in_c.get())),
+        waits: Cell::new(worker(|w| w.waits.get())),
+        helds: Cell::new(worker(|w| w.helds.get())),
+        turns: Cell::new(worker(|w| w.turns.get())),
+        events: Cell::new(worker(|w| w.events.get())),
+        chunks: Cell::new(std::ptr::null_mut()),
+    };
+    let kept = Box::into_raw(Box::new(new));
+    KEPT.with(|cell| cell.set(kept));
+    EVERY_KEPT.lock().unwrap_or_else(|e| e.into_inner()).push(kept as usize);
+    kept
+}
+
+#[cold]
+#[inline(never)]
+fn register_kept(kept: &'static Kept, generation: usize) {
+    let mut key = KEY.lock().unwrap_or_else(|e| e.into_inner());
+    let key = *key.get_or_insert_with(|| {
+        let mut key = 0;
+        unsafe { libc::pthread_key_create(&mut key, Some(thread_ended)) };
+        key
+    });
+    unsafe { libc::pthread_setspecific(key, kept as *const Kept as *const libc::c_void) };
+    kept.generation.set(generation);
 }
 
 /// What the runtime keeps for the thread, when it made it already and will
@@ -461,6 +514,11 @@ unsafe extern "C" fn thread_ended(kept: *mut libc::c_void) {
 
 fn give_back(kept: *mut Kept) {
     EVERY_KEPT.lock().unwrap_or_else(|e| e.into_inner()).retain(|&k| k != kept as usize);
+    // Wait for any in-flight `tasks()` view that pinned this thread's native
+    // task before taking unique ownership of `kept`.
+    while unsafe { (*kept).calling.load(Ordering::Acquire) } & CALL_INSPECTED != 0 {
+        std::hint::spin_loop();
+    }
     let kept = unsafe { Box::from_raw(kept) };
     worker(|w| {
         if w.stacks.get() == kept.stacks.get() {
@@ -472,8 +530,12 @@ fn give_back(kept: *mut Kept) {
     for (free, value) in kept.ends.take() {
         unsafe { free(value, true) };
     }
-    if !kept.call.get().is_null() {
-        drop(unsafe { Box::from_raw(kept.call.get()) });
+    let call = kept.call.load(Ordering::Relaxed);
+    if !call.is_null() {
+        if kept.call_ready.get() {
+            unsafe { std::ptr::drop_in_place(call as *mut Task) };
+        }
+        drop(unsafe { Box::from_raw(call) });
     }
     crate::trace::free_signal_stack(kept.signal.get());
 }
@@ -504,6 +566,7 @@ pub(super) fn give_back_kept() {
         kept.ends.set(ends);
     }
     SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    clear_shared_blocks();
     if let Some(key) = key {
         unsafe { libc::pthread_key_delete(key) };
     }

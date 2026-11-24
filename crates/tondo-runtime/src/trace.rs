@@ -574,36 +574,67 @@ pub(crate) static FOREIGN: Origin = Origin::Foreign;
 /// The origins kept, by their frames, depth and parent.
 type Kept = std::collections::HashMap<([usize; SPAWN_DEPTH], usize, usize, usize), &'static Origin>;
 
+thread_local! {
+    /// Where this thread's latest tasks were started: a loop spawns from the
+    /// same places many times, from several when its turns run four at a time,
+    /// and the last few origins serve them all without a look at the others.
+    static LAST: std::cell::Cell<[Option<&'static Origin>; RECENT]> = const { std::cell::Cell::new([None; RECENT]) };
+}
+
 /// The origin of a task the running one spawns from here. An origin is
 /// kept for the life of the program, one for each place a task spawns from
 /// and origin of that task, of which a program has few: a task holds its
 /// own without a count, which every task spawned from one place would
 /// change, on whatever core it ends.
 #[inline(always)]
-pub(crate) fn spawned(parent: Option<&'static Origin>) -> &'static Origin {
-    let mut addresses = [0; SPAWN_DEPTH];
-    let mut count = 0;
-    for (slot, address) in addresses.iter_mut().zip(here()) {
-        *slot = address;
-        count += 1;
-    }
+pub(crate) fn spawned(parent: Option<&'static Origin>, bounds: (usize, usize)) -> &'static Origin {
+    let fp = frame_pointer();
     let depth = match parent {
         Some(Origin::Spawned { depth, .. }) => depth + 1,
         _ => 1,
     };
     let parent = parent.filter(|_| depth < ORIGINS);
-    // A loop spawns from the same places many times, from several when its
-    // turns run four at a time: the last few origins serve them all,
-    // without a look at the others.
-    thread_local! {
-        static LAST: std::cell::Cell<[Option<&'static Origin>; RECENT]> = const { std::cell::Cell::new([None; RECENT]) };
+    // Hot path: match the walk directly against the thread's most recent
+    // origin without zeroing a 30-frame buffer or copying the recent table.
+    if let Some(found) = LAST.with(|cell| {
+        // Safe: `Walk` only reads stack memory and never re-enters `spawned`.
+        let recent = unsafe { &*cell.as_ptr() };
+        let origin = recent[0]?;
+        let Origin::Spawned { addresses, count, parent: p, depth: d } = *origin else { return None };
+        if d != depth || p.map(std::ptr::from_ref) != parent.map(std::ptr::from_ref) {
+            return None;
+        }
+        let mut walk = walk(fp, bounds);
+        for &expected in &addresses[..count] {
+            if walk.next() != Some(expected) {
+                return None;
+            }
+        }
+        (count == SPAWN_DEPTH || walk.next().is_none()).then_some(origin)
+    }) {
+        return found;
+    }
+    spawned_slow(fp, bounds, parent, depth)
+}
+
+#[cold]
+#[inline(never)]
+fn spawned_slow(fp: usize, bounds: (usize, usize), parent: Option<&'static Origin>, depth: usize) -> &'static Origin {
+    let mut addresses = [0; SPAWN_DEPTH];
+    let mut count = 0;
+    for (slot, address) in addresses.iter_mut().zip(walk(fp, bounds)) {
+        *slot = address;
+        count += 1;
     }
     let same = |origin: &Origin| {
         matches!(origin, Origin::Spawned { addresses: a, count: c, parent: p, depth: d }
         if a[..*c] == addresses[..count] && p.map(std::ptr::from_ref) == parent.map(std::ptr::from_ref) && *d == depth)
     };
     let mut recent = LAST.get();
-    if let Some(found) = recent.iter().flatten().find(|origin| same(origin)) {
+    if let Some(index) = recent.iter().position(|slot| slot.is_some_and(same)) {
+        let found = recent[index].unwrap();
+        recent[..=index].rotate_right(1);
+        LAST.set(recent);
         return found;
     }
     static KEPT: Mutex<Option<Kept>> = Mutex::new(None);

@@ -1064,7 +1064,7 @@ pub(super) unsafe fn try_case(case: &mut Case) -> Option<Option<*mut Task>> {
             }
             WAIT => {
                 let join = case.handle as *mut JoinObject;
-                if !(*join).done {
+                if !(*join).done.load(Ordering::Relaxed) {
                     return None;
                 }
                 take(join, case.value);

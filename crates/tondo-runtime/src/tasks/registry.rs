@@ -136,13 +136,17 @@ pub(super) fn unregister(task: *mut Task) {
     shard.free.push(slot);
 }
 
-/// Every task alive, with every shard locked, in order: while they are, no
-/// task is freed.
-pub(super) struct All(Vec<std::sync::MutexGuard<'static, Tasks>>);
+/// Every task alive, with every shard locked, in order, plus any active
+/// native C-thread callback tasks pinned for the lifetime of this guard:
+/// while it is held, no task is freed or reset.
+pub(super) struct All {
+    shards: Vec<std::sync::MutexGuard<'static, Tasks>>,
+    natives: Vec<(*const Kept, usize)>,
+}
 
 impl All {
     pub(super) fn iter(&self) -> impl Iterator<Item = &usize> {
-        self.0.iter().flat_map(|shard| shard.iter())
+        self.shards.iter().flat_map(|shard| shard.iter()).chain(self.natives.iter().map(|(_, task)| task))
     }
 
     /// The tasks in the order they started, which the shards, picked by
@@ -156,12 +160,22 @@ impl All {
     }
 
     pub(super) fn len(&self) -> usize {
-        self.0.iter().map(|shard| shard.len()).sum()
+        self.shards.iter().map(|shard| shard.len()).sum::<usize>() + self.natives.len()
+    }
+}
+
+impl Drop for All {
+    fn drop(&mut self) {
+        if !self.natives.is_empty() {
+            release_native_tasks(&self.natives);
+        }
     }
 }
 
 pub(super) fn tasks() -> All {
-    All(TASKS.iter().map(|shard| shard.0.lock().unwrap_or_else(|e| e.into_inner())).collect())
+    let shards = TASKS.iter().map(|shard| shard.0.lock().unwrap_or_else(|e| e.into_inner())).collect();
+    let natives = active_native_tasks();
+    All { shards, natives }
 }
 
 /// What the scheduler holds now, for `tondo counters`.
