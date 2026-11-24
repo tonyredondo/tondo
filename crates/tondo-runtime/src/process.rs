@@ -795,7 +795,7 @@ fn located(program: &OsStr, path: Option<&OsStr>, directory: Option<&Path>) -> s
                 return Ok(started_by_path_cstr(&buf));
             }
             denied = true;
-        } else if std::io::Error::last_os_error().raw_os_error() == Some(libc::EACCES) {
+        } else if matches!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EACCES | libc::EPERM)) {
             denied = true;
         }
     }
@@ -812,6 +812,9 @@ fn started_by_path_cstr(nul_path: &[u8]) -> Option<PathBuf> {
         while got < head.len() {
             let n = unsafe { libc::read(fd, head[got..].as_mut_ptr().cast(), head.len() - got) };
             if n <= 0 {
+                if n < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
                 break;
             }
             got += n as usize;
