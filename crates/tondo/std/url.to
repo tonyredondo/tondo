@@ -207,9 +207,7 @@ fn isScheme(text: String): Bool {
     for index in 0..length {
         let b = Int(text.byteAt(index))
         let letter = (b >= 0x61 and b <= 0x7A) or (b >= 0x41 and b <= 0x5A)
-        let tail =
-            index > 0 and
-                ((b >= 0x30 and b <= 0x39) or b == 0x2B or b == 0x2D or b == 0x2E)
+        let tail = index > 0 and ((b >= 0x30 and b <= 0x39) or b == 0x2B or b == 0x2D or b == 0x2E)
         if not (letter or tail) {
             return false
         }
@@ -226,16 +224,11 @@ fn ipv6(text: String): Bool {
 /// RFC 3986 unreserved characters and sub-delimiters:
 /// `A-Z`, `a-z`, `0-9`, and `-._~!$&'()*+,;=`.
 const PlainLo: UInt64 = 0x2BFF_7FD2_0000_0000
+
 const PlainHi: UInt64 = 0x47FF_FFFE_87FF_FFFE
 
 fn allowedByte(b: UInt64, lo: UInt64, hi: UInt64): Bool {
-    if b < 64 {
-        (lo >> b) & 1 != 0
-    } else if b < 128 {
-        (hi >> (b - 64)) & 1 != 0
-    } else {
-        false
-    }
+    if b < 64 { (lo >> b) & 1 != 0 } else if b < 128 { (hi >> (b - 64)) & 1 != 0 } else { false }
 }
 
 /// A part with its `%XX` read, which must be UTF-8; `at` is where it

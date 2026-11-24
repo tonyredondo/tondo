@@ -305,7 +305,7 @@ pub unsafe extern "C" fn tondo_rt_text_lower(s: *const Str, region: *mut Region)
         true => cased(str_in(region, s.as_bytes()), <[u8]>::make_ascii_lowercase),
         // Greek final sigma depends on surrounding characters.
         false if s.contains('Σ') => str_in(region, s.to_lowercase().as_bytes()),
-        false => case_in(s, region, false),
+        false => case_in::<false>(s, region),
     }
 }
 
@@ -314,50 +314,170 @@ pub unsafe extern "C" fn tondo_rt_text_upper(s: *const Str, region: *mut Region)
     let s = text(&s);
     match s.is_ascii() {
         true => cased(str_in(region, s.as_bytes()), <[u8]>::make_ascii_uppercase),
-        false => case_in(s, region, true),
+        false => case_in::<true>(s, region),
     }
 }
 
 /// Changes a non-ASCII text's case directly into `region` (or a single heap
-/// string), handling ASCII spans in chunks without a temporary Rust `String`.
-fn case_in(s: &str, region: *mut Region, upper: bool) -> *mut Str {
+/// string) without a temporary Rust `String`, writing straight into the
+/// builder's buffer and bypassing Unicode table lookups for ASCII, Latin-1
+/// letters and uncased CJK/Hangul blocks.
+fn case_in<const UPPER: bool>(s: &str, region: *mut Region) -> *mut Str {
+    let bytes = s.as_bytes();
+    if bytes.len() <= crate::strings::SHORT_MAX {
+        let mut buf = [0u8; 32];
+        let mut out = 0;
+        for c in s.chars() {
+            if UPPER {
+                for u in c.to_uppercase() {
+                    out += u.encode_utf8(&mut buf[out..]).len();
+                }
+            } else {
+                for l in c.to_lowercase() {
+                    out += l.encode_utf8(&mut buf[out..]).len();
+                }
+            }
+        }
+        return str_in(region, &buf[..out]);
+    }
     let mut builder = std::mem::MaybeUninit::<crate::Builder>::uninit();
     unsafe {
         match region.is_null() {
             true => {
-                builder.write(crate::Builder::new(s.len()));
+                builder.write(crate::Builder::new(bytes.len()));
             }
-            false => super::builder::tondo_rt_sb_start_region(builder.as_mut_ptr(), s.len(), region),
+            false => super::builder::tondo_rt_sb_start_region(builder.as_mut_ptr(), bytes.len(), region),
         }
     }
     let mut builder = unsafe { builder.assume_init() };
-    let bytes = s.as_bytes();
+    let (mut dst, mut out, mut cap) = builder.parts();
     let mut at = 0;
-    let mut encoded = [0u8; 4];
     while at < bytes.len() {
-        if bytes[at] < 0x80 {
-            let mut chunk = [0u8; 64];
-            let mut n = 0;
-            while at < bytes.len() && n < chunk.len() && bytes[at] < 0x80 {
-                chunk[n] = if upper { bytes[at].to_ascii_uppercase() } else { bytes[at].to_ascii_lowercase() };
+        let b = bytes[at];
+        if b < 0x80 {
+            let room = cap - out;
+            let left = bytes.len() - at;
+            let limit = at + room.min(left);
+            while at < limit {
+                let ascii = unsafe { *bytes.get_unchecked(at) };
+                if ascii >= 0x80 {
+                    break;
+                }
+                let mapped = if UPPER { ascii.to_ascii_uppercase() } else { ascii.to_ascii_lowercase() };
+                unsafe { *dst.add(out) = mapped };
+                out += 1;
                 at += 1;
-                n += 1;
             }
-            builder.extend(&chunk[..n]);
-        } else {
-            let c = s[at..].chars().next().unwrap();
-            at += c.len_utf8();
-            if upper {
-                for u in c.to_uppercase() {
-                    builder.extend(u.encode_utf8(&mut encoded).as_bytes());
+            if at < bytes.len() && out == cap && bytes[at] < 0x80 {
+                builder.set_len(out);
+                builder.reserve(bytes.len() - at);
+                (dst, out, cap) = builder.parts();
+            }
+            continue;
+        }
+        // Latin-1 Supplement (`U+00C0..=U+00FF`): single-byte shift for almost
+        // every character; `ß` (0x9F) and `ÿ` (0xBF) under uppercase fall
+        // through to the full Unicode mapping.
+        if b == 0xC3 {
+            let b1 = unsafe { *bytes.get_unchecked(at + 1) };
+            let mapped = if UPPER {
+                match b1 {
+                    0xA0..=0xB6 | 0xB8..=0xBE => Some(b1 - 0x20),
+                    0x80..=0x9E | 0xB7 => Some(b1),
+                    _ => None,
                 }
             } else {
-                for l in c.to_lowercase() {
-                    builder.extend(l.encode_utf8(&mut encoded).as_bytes());
+                match b1 {
+                    0x80..=0x96 | 0x98..=0x9E => Some(b1 + 0x20),
+                    _ => Some(b1),
                 }
+            };
+            if let Some(m1) = mapped {
+                if out + 2 > cap {
+                    builder.set_len(out);
+                    builder.reserve(2);
+                    (dst, out, cap) = builder.parts();
+                }
+                unsafe {
+                    *dst.add(out) = 0xC3;
+                    *dst.add(out + 1) = m1;
+                }
+                out += 2;
+                at += 2;
+                continue;
+            }
+        }
+        // CJK, Hiragana, Katakana (`U+3000..=U+9FFF`, lead `0xE3..=0xE9`) and
+        // Hangul Syllables / PUA (`U+B000..=U+EFFF`, lead `0xEB..=0xEE`) have
+        // no Unicode case mappings; copy their 3 UTF-8 bytes directly.
+        if matches!(b, 0xE3..=0xE9 | 0xEB..=0xEE) {
+            if out + 3 > cap {
+                builder.set_len(out);
+                builder.reserve(3);
+                (dst, out, cap) = builder.parts();
+            }
+            unsafe {
+                *dst.add(out) = b;
+                *dst.add(out + 1) = *bytes.get_unchecked(at + 1);
+                *dst.add(out + 2) = *bytes.get_unchecked(at + 2);
+            }
+            out += 3;
+            at += 3;
+            continue;
+        }
+        let c = if b < 0xE0 {
+            let b1 = unsafe { *bytes.get_unchecked(at + 1) };
+            at += 2;
+            unsafe { char::from_u32_unchecked((((b & 0x1F) as u32) << 6) | ((b1 & 0x3F) as u32)) }
+        } else {
+            let c = unsafe { s.get_unchecked(at..).chars().next().unwrap_unchecked() };
+            at += c.len_utf8();
+            c
+        };
+        let mut write_char = |ch: char| {
+            let code = ch as u32;
+            if code < 0x80 {
+                if out + 1 > cap {
+                    builder.set_len(out);
+                    builder.reserve(1);
+                    (dst, out, cap) = builder.parts();
+                }
+                unsafe { *dst.add(out) = code as u8 };
+                out += 1;
+            } else if code < 0x800 {
+                if out + 2 > cap {
+                    builder.set_len(out);
+                    builder.reserve(2);
+                    (dst, out, cap) = builder.parts();
+                }
+                unsafe {
+                    *dst.add(out) = 0xC0 | ((code >> 6) as u8);
+                    *dst.add(out + 1) = 0x80 | ((code & 0x3F) as u8);
+                }
+                out += 2;
+            } else {
+                let mut encoded = [0u8; 4];
+                let enc = ch.encode_utf8(&mut encoded).as_bytes();
+                if out + enc.len() > cap {
+                    builder.set_len(out);
+                    builder.reserve(enc.len());
+                    (dst, out, cap) = builder.parts();
+                }
+                unsafe { std::ptr::copy_nonoverlapping(enc.as_ptr(), dst.add(out), enc.len()) };
+                out += enc.len();
+            }
+        };
+        if UPPER {
+            for u in c.to_uppercase() {
+                write_char(u);
+            }
+        } else {
+            for l in c.to_lowercase() {
+                write_char(l);
             }
         }
     }
+    builder.set_len(out);
     builder.finish()
 }
 
@@ -866,6 +986,54 @@ mod tests {
         }
         for text in ["", " ", "one", " one  two\tthree\n", "\x0b\x0cform\rfeed \x1cfile", "a b", "  lead", "trail  "] {
             assert_eq!(ascii_words(text).collect::<Vec<_>>(), text.split_whitespace().collect::<Vec<_>>(), "{text:?}");
+        }
+    }
+
+    /// Every Unicode scalar maps through `case_in`'s fast paths identically to
+    /// Rust's `str::to_uppercase` and `str::to_lowercase` (and short inputs
+    /// never outgrow the stack buffer).
+    #[test]
+    fn case_in_matches_unicode() {
+        let mut buf = [0u8; 4];
+        for c in '\0'..=char::MAX {
+            let s: &str = c.encode_utf8(&mut buf);
+            let b = s.as_bytes();
+            assert!(c.to_uppercase().map(char::len_utf8).sum::<usize>() <= 3 * b.len(), "upper growth for {c:?}");
+            assert!(c.to_lowercase().map(char::len_utf8).sum::<usize>() <= 3 * b.len(), "lower growth for {c:?}");
+            if matches!(b[0], 0xE3..=0xE9 | 0xEB..=0xEE) {
+                assert_eq!(s.to_uppercase(), s, "expected uncased upper for {c:?}");
+                assert_eq!(s.to_lowercase(), s, "expected uncased lower for {c:?}");
+            }
+            if b[0] == 0xC3 {
+                let padded = format!("01234567{s}");
+                let up = case_in::<true>(&padded, std::ptr::null_mut());
+                let lo = case_in::<false>(&padded, std::ptr::null_mut());
+                unsafe {
+                    assert_eq!(super::super::str_text(&up), padded.to_uppercase(), "upper {c:?}");
+                    assert_eq!(super::super::str_text(&lo), padded.to_lowercase(), "lower {c:?}");
+                    super::super::tondo_rt_str_release(up);
+                    super::super::tondo_rt_str_release(lo);
+                }
+            }
+        }
+        for sample in [
+            "ñ",
+            "ß",
+            "ßßß",
+            "ÿ",
+            "ΐ",
+            "el ñandú comió más piñones αβγ δέλτα 日本語の文章 ",
+            "EL ÑANDÚ COMIÓ MÁS PIÑONES ΑΒΓ ΔΈΛΤΑ 日本語の文章 ",
+            "straße ﬃ İ µ 한글 𐐷",
+        ] {
+            let up = case_in::<true>(sample, std::ptr::null_mut());
+            let lo = case_in::<false>(sample, std::ptr::null_mut());
+            unsafe {
+                assert_eq!(super::super::str_text(&up), sample.to_uppercase(), "upper {sample:?}");
+                assert_eq!(super::super::str_text(&lo), sample.to_lowercase(), "lower {sample:?}");
+                super::super::tondo_rt_str_release(up);
+                super::super::tondo_rt_str_release(lo);
+            }
         }
     }
 }

@@ -221,7 +221,7 @@ stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in 
 stats.to:19:5: `"{sensor}: {value:.1}"` goes in a region of `main` (in main)
 stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
 stats.to:19:17: `value` in `formats.formatNumber`, `formatText("{sign}{prefix}{digits}", -1, width, f…` stays a call of `formats.formatText`: its body costs 73, more than the 31 inlining takes; 2 places in it make values in regions of its own and 4 in the region its caller gives (in label)
-stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 31 inlining takes; 6 places in it make values in regions of its own and 6 in the region its caller gives (in main)
+stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 70, more than the 31 inlining takes; 6 places in it make values in regions of its own and 6 in the region its caller gives (in main)
 stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{digits}"` is made on the heap: it is passed to a call that may keep it (in label)
 stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{zeros}{digits}"` is made on the heap: something else is assigned to it (in label)
 stats.to:19:17: `value` is inlined: the body of `formats.formatFloat` is copied here (in label)
@@ -449,15 +449,15 @@ program's line that brought it in. This function walks a text:
 ```tondo file=letters.to
 import std.console
 
-/// How many letters a text has.
+/// The sum of the letter codes in a text.
 fn letters(text: String): Int {
-    var count = 0
+    var total = 0
     for c in text.chars() {
         if c.isLetter() {
-            count += 1
+            total += c.code()
         }
     }
-    count
+    total
 }
 
 fn main() {
@@ -466,26 +466,23 @@ fn main() {
 ```
 
 ```text output
-10
+1084
 ```
 
 ```text listing
 $ tondo optimizations letters.to --kind checked
-letters.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.Max` (in letters, main)
-letters.to:8:13: `count += 1` keeps its overflow check, in a loop: nothing bounds `count` from above (in letters, main)
+letters.to:8:13: `total += c.code()` keeps its overflow check, in a loop: nothing bounds `total` from above, nor what is added from above (in letters, main)
 ```
 
-The second line is the program's own: nothing says how large `count` can
-get, so each turn checks that adding one fits. The first is of the standard
-library, in the method that gives the next character, which the loop over
-`chars()` copied into `letters`: its line is the program's, and it names
-where the code is from and the statement checked. A check that the
-compiler could drop, as the one of `count += 1` in the first program of
-this chapter, is under the kind `unchecked`.
+Nothing bounds how large `total` can get, so each turn checks that adding
+the next code fits. A check that the compiler could drop, as the one of
+`count += 1` in the first program of this chapter (or the iterator's own
+step inside `text.chars()`), is under the kind `unchecked`.
 
 A program that has a `recover` anywhere, as tests often do, pays one more
 thing in its loops: after what may panic, it looks whether it did. The
-same function, called inside a `recover`, shows it:
+same function, called inside a `recover`, also shows a check from the
+standard library reported at the program's line that brought it in:
 
 ```diff file=caught.to from=letters.to
  fn main() {
@@ -496,11 +493,9 @@ same function, called inside a `recover`, shows it:
 
 ```text listing
 $ tondo optimizations caught.to --kind checked
-caught.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
-caught.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.Max` (in letters, main)
 caught.to:7:12: `c.isLetter()` in `Char.isLetter`, `textNative.charIs(self, 1)` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
-caught.to:8:13: `count += 1` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
-caught.to:8:13: `count += 1` keeps its overflow check, in a loop: nothing bounds `count` from above (in letters, main)
+caught.to:8:13: `total += c.code()` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
+caught.to:8:13: `total += c.code()` keeps its overflow check, in a loop: nothing bounds `total` from above, nor what is added from above (in letters, main)
 ```
 
 So a benchmark is not always the cost of the program: the build of the
