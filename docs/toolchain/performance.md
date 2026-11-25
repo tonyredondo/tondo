@@ -443,21 +443,20 @@ text that grows in a loop, as `text = text.concat(part)`, grows in place.
 ### Why a check stays
 
 A check that the compiler keeps says what it would need to know to drop
-it, and the code of the standard library that a loop runs is said at the
-program's line that brought it in. This function walks a text:
+it. This function walks a text and adds the codes of its letters:
 
 ```tondo file=letters.to
 import std.console
 
-/// How many letters a text has.
+/// The codes of a text's letters, added.
 fn letters(text: String): Int {
-    var count = 0
+    var total = 0
     for c in text.chars() {
         if c.isLetter() {
-            count += 1
+            total += c.code()
         }
     }
-    count
+    total
 }
 
 fn main() {
@@ -466,26 +465,26 @@ fn main() {
 ```
 
 ```text output
-10
+1084
 ```
 
 ```text listing
 $ tondo optimizations letters.to --kind checked
-letters.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.Max` (in letters, main)
-letters.to:8:13: `count += 1` keeps its overflow check, in a loop: nothing bounds `count` from above (in letters, main)
+letters.to:8:13: `total += c.code()` keeps its overflow check, in a loop: nothing bounds `total` from above, nor what is added from above (in letters, main)
 ```
 
-The second line is the program's own: nothing says how large `count` can
-get, so each turn checks that adding one fits. The first is of the standard
-library, in the method that gives the next character, which the loop over
-`chars()` copied into `letters`: its line is the program's, and it names
-where the code is from and the statement checked. A check that the
-compiler could drop, as the one of `count += 1` in the first program of
-this chapter, is under the kind `unchecked`.
+Nothing says how large `total` can get, nor how large a code is, so each
+turn checks that the sum fits. It is the only check the loop keeps. The
+place it reads the text at cannot pass the text's length, and a count of
+the turns, as `count += 1` in the first program of this chapter, cannot
+pass the turns: checks that the compiler drops are under the kind
+`unchecked`.
 
 A program that has a `recover` anywhere, as tests often do, pays one more
 thing in its loops: after what may panic, it looks whether it did. The
-same function, called inside a `recover`, shows it:
+same function, called inside a `recover`, shows it, and shows how the
+code of the standard library that a loop runs is told, at the program's
+line that brought it in:
 
 ```diff file=caught.to from=letters.to
  fn main() {
@@ -496,12 +495,14 @@ same function, called inside a `recover`, shows it:
 
 ```text listing
 $ tondo optimizations caught.to --kind checked
-caught.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
-caught.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.Max` (in letters, main)
 caught.to:7:12: `c.isLetter()` in `Char.isLetter`, `textNative.charIs(self, 1)` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
-caught.to:8:13: `count += 1` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
-caught.to:8:13: `count += 1` keeps its overflow check, in a loop: nothing bounds `count` from above (in letters, main)
+caught.to:8:13: `total += c.code()` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
+caught.to:8:13: `total += c.code()` keeps its overflow check, in a loop: nothing bounds `total` from above, nor what is added from above (in letters, main)
 ```
+
+The line of `c.isLetter()` is the library's: the loop copied
+`Char.isLetter` into `letters`, so its line is the program's, and it names
+where the code is from and the statement checked.
 
 So a benchmark is not always the cost of the program: the build of the
 tests may check what the program's build does not, and `tondo
