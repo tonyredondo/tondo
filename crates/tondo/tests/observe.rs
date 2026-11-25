@@ -865,25 +865,41 @@ fn dumps_of_a_running_program_and_at_a_panic() {
 
 /// A task that waits, deep in the runtime, keeps in a dump what its code
 /// had in registers: the runtime's frames saved them, and the tables of
-/// unwinding of the executable say where, on Linux and on macOS.
+/// unwinding of the executable say where, on Linux and on macOS. The other
+/// task fails only once a dump has shown both waiting, `main` in its wait for
+/// it: on a busy machine `main` may otherwise not have reached its wait yet.
 #[test]
 fn a_dump_keeps_the_bindings_of_a_task_that_waits() {
+    use std::io::Write;
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-waits");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let program = "import std.console\n\nfn total(items: Array[String]): Int {\n    let prices = [3, 4]\n    prices[items.length()]\n}\n\nfn main() {\n    let items = [\"a\", \"b\", \"c\"]\n    let job = spawn total(items)\n    console.println(\"{items.length()} {job.wait()}\")\n}\n";
+    let program = "import std.console\n\nfn total(items: Array[String]): Int {\n    let prices = [3, 4]\n    _ = console.readLine()\n    prices[items.length()]\n}\n\nfn main() {\n    let items = [\"a\", \"b\", \"c\"]\n    let job = spawn total(items)\n    console.println(\"{items.length()} {job.wait()}\")\n}\n";
     std::fs::write(dir.join("waits.to"), program).unwrap();
-    let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
-        .args(["run", "waits.to"])
-        .env("TONDO_DUMP", &dir)
+    let executable = dir.join("waits");
+    let built = common::command(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "waits.to", "--output"])
+        .arg(&executable)
         .current_dir(&dir)
         .output()
         .unwrap();
-    assert!(!ran.status.success());
-    let dump = std::fs::read_dir(&dir).unwrap().flatten().map(|f| f.path());
-    let dump = dump.into_iter().find(|p| p.to_string_lossy().ends_with(".dump.json")).unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let dumps = dir.join("dumps");
+    std::fs::create_dir_all(&dumps).unwrap();
+    let mut child = common::command(&executable)
+        .env("TONDO_DUMP", &dumps)
+        .env("TONDO_DIAGNOSTICS", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    until_waiting(child.id(), 2, &dir.join("waiting.dump.json"));
+    child.stdin.take().unwrap().write_all(b"go\n").unwrap();
+    assert!(!child.wait().unwrap().success());
+    let dump = dumps_in(&dumps).pop().expect("the dump of the panic");
     let locals = tondo(&["dump", "read", dump.to_str().unwrap(), "locals", "1", "--json"]);
-    assert_eq!(locals["locals"]["at"], "waits.to:11 in main", "{locals}");
+    assert_eq!(locals["locals"]["at"], "waits.to:12 in main", "{locals}");
     let bindings: Vec<String> = locals["locals"]["bindings"]
         .as_array()
         .unwrap()
