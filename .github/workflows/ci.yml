@@ -334,13 +334,17 @@ jobs:
       - uses: ./.github/actions/runtime
         with:
           label: alpine-${{ matrix.target }}
-      # tests.sh asks for jq, and for an xargs that runs two at a time.
+      # tests.sh asks for jq, and for an xargs that runs two at a time. The
+      # tests' scratch (target/tmp) goes first: the cache brings back what a
+      # run as root left there owned by the runner's user, and a program then
+      # finds the tests' dumps directory not its own.
       - run: >
           mkdir -p ~/.cargo/registry ~/.cargo/git &&
           docker run --rm -v "$PWD:/work" -w /work -e CARGO_INCREMENTAL=0 -e TONDO_CI_DUMPS=/work/target/ci-dumps
           -v "$HOME/.cargo/registry:/usr/local/cargo/registry" -v "$HOME/.cargo/git:/usr/local/cargo/git"
           rust:alpine sh -c
-          "apk add --no-cache musl-dev zlib-dev zlib-static git curl tar jq findutils &&
+          "rm -rf target/tmp &&
+          apk add --no-cache musl-dev zlib-dev zlib-static git curl tar jq findutils &&
           (rustup show active-toolchain || rustup toolchain install) &&
           ${{ contains(matrix.run, 'workspace') && '.github/scripts/tests.sh 2' || 'TONDO_CASES_STATIC=1 cargo test --workspace --test cases cases' }} &&
           cargo test --workspace --test cases --no-run 2>&1 | grep -o 'target/debug/deps/cases-[0-9a-f]*' > target/cases"
