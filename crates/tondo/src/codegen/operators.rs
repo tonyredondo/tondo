@@ -312,8 +312,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// product overflows when the other factor is out of the range whose
     /// products fit, which waits for nothing, as the flag of a
     /// multiplication waits for it: `3 * n + 1` is then one `lea` on
-    /// x86-64.
-    fn multiplied(&mut self, a: ir::Value, b: ir::Value, int: Option<IntTy>) -> Option<(ir::Value, ir::Value)> {
+    /// x86-64. By 2, the factor added to itself says by its flag whether
+    /// it overflows, `add r, r; jo`, with none of the range's constants:
+    /// built here rather than as a rule of the code generator, as the
+    /// range's test is the compiler's own and the e-graph rewrites no
+    /// instruction of two results. The third value says which factor was
+    /// doubled, `Some(true)` for `a`, so that a panic's message recovers it
+    /// from the result.
+    fn multiplied(
+        &mut self,
+        a: ir::Value,
+        b: ir::Value,
+        int: Option<IntTy>,
+    ) -> Option<(ir::Value, ir::Value, Option<bool>)> {
         let int = int.filter(|int| int.bits() <= 64)?;
         let constant = |fb: &FunctionBuilder, value: ir::Value| {
             let ir::ValueDef::Result(inst, _) = fb.func.dfg.value_def(value) else { return None };
@@ -322,13 +333,21 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 _ => None,
             }
         };
-        let (factor, c) = match (constant(&self.e.fb, a), constant(&self.e.fb, b)) {
-            (_, Some(c)) => (a, c),
-            (Some(c), _) => (b, c),
+        let (factor, c, right_const) = match (constant(&self.e.fb, a), constant(&self.e.fb, b)) {
+            (_, Some(c)) => (a, c, true),
+            (Some(c), _) => (b, c, false),
             _ => return None,
         };
         if !by_range(c as i128, int.bits()) {
             return None;
+        }
+        if c == 2 {
+            let (result, overflow) = if int.signed() {
+                self.e.fb.ins().sadd_overflow(factor, factor)
+            } else {
+                self.e.fb.ins().uadd_overflow(factor, factor)
+            };
+            return Some((result, overflow, Some(right_const)));
         }
         let clif = self.e.fb.func.dfg.value_type(factor);
         let out = if int.signed() {
@@ -341,7 +360,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let high = self.e.int_const(clif, (int.max() / c as u128) as i128);
             self.e.fb.ins().icmp(IntCC::UnsignedGreaterThan, factor, high)
         };
-        Some((self.e.fb.ins().imul(a, b), out))
+        Some((self.e.fb.ins().imul(a, b), out, None))
     }
 
     pub(super) fn binary(&mut self, op: BinOp, left: &Operand, right: &Operand, span: Span) -> ir::Value {
@@ -433,25 +452,44 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     _ => None,
                 };
                 let ins = self.e.fb.ins();
-                let (result, overflow) = match (op, signed) {
-                    _ if let Some(found) = constant => found,
-                    (BinOp::Add, true) => ins.sadd_overflow(a, b),
-                    (BinOp::Add, false) => ins.uadd_overflow(a, b),
-                    (BinOp::Sub, true) => ins.ssub_overflow(a, b),
-                    (BinOp::Sub, false) => ins.usub_overflow(a, b),
-                    (_, true) => ins.smul_overflow(a, b),
-                    (_, false) => ins.umul_overflow(a, b),
+                let (result, overflow, doubled) = match constant {
+                    Some(found) => found,
+                    None => {
+                        let (result, overflow) = match (op, signed) {
+                            (BinOp::Add, true) => ins.sadd_overflow(a, b),
+                            (BinOp::Add, false) => ins.uadd_overflow(a, b),
+                            (BinOp::Sub, true) => ins.ssub_overflow(a, b),
+                            (BinOp::Sub, false) => ins.usub_overflow(a, b),
+                            (_, true) => ins.smul_overflow(a, b),
+                            (_, false) => ins.umul_overflow(a, b),
+                        };
+                        (result, overflow, None)
+                    }
                 };
-                // The left operand of a sum or a difference, for the panic's
-                // message, from the result, which wraps: the code that goes on
-                // needs to keep only the result.
+                // The left operand of a sum or a difference, or the factor a
+                // product by 2 doubled, for the panic's message, from the
+                // result, which wraps: the code that goes on needs to keep
+                // only the result.
                 self.panic_values_if(overflow, 5, span, |this| {
-                    let left = match op {
-                        BinOp::Add => this.e.fb.ins().isub(result, b),
-                        BinOp::Sub => this.e.fb.ins().iadd(result, b),
-                        _ => a,
+                    let recover_doubled = |this: &mut Self| {
+                        let clif = this.e.fb.func.dfg.value_type(result);
+                        let sign_bit = this.e.int_const(clif, 1i128 << (clif.bits() - 1));
+                        let shifted = this.e.fb.ins().ushr_imm_u(result, 1);
+                        let top = if signed {
+                            let res_sign = this.e.fb.ins().band(result, sign_bit);
+                            this.e.fb.ins().bxor(res_sign, sign_bit)
+                        } else {
+                            sign_bit
+                        };
+                        this.e.fb.ins().bor(shifted, top)
                     };
-                    (detail, left, b, ty)
+                    match (op, doubled) {
+                        (BinOp::Add, _) => (detail, this.e.fb.ins().isub(result, b), b, ty),
+                        (BinOp::Sub, _) => (detail, this.e.fb.ins().iadd(result, b), b, ty),
+                        (BinOp::Mul, Some(true)) => (detail, recover_doubled(this), b, ty),
+                        (BinOp::Mul, Some(false)) => (detail, a, recover_doubled(this), ty),
+                        _ => (detail, a, b, ty),
+                    }
                 });
                 result
             }

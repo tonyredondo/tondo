@@ -1,0 +1,63 @@
+import std.console
+
+// A product by 2 is the factor added to itself in a release build, whose
+// overflow the addition's flag tells: the product and its check are those
+// of any product, and a panic's message names the factor, which the
+// cold path finds again from the sum that wrapped. Each side of the
+// constant, each sign, and both ends of `Int` and `UInt`.
+
+fn twice(n: Int): Int {
+    n * 2
+}
+
+fn twiceLeft(n: Int): Int {
+    2 * n
+}
+
+fn twiceWide(n: UInt): UInt {
+    n * 2
+}
+
+fn small(n: Int32): Int32 {
+    2 * n
+}
+
+fn said(result: Int ! Panic): String {
+    match result {
+        ok(value) => "{value}"
+        err(p) => p.message
+    }
+}
+
+fn main() {
+    let max = 9223372036854775807
+    let min = -9223372036854775807 - 1
+    console.println("{twice(21)} {twiceLeft(-21)} {twice(max / 2)} {twiceLeft(min / 2)}")
+    console.println(said(recover { twice(max / 2 + 1) }))
+    console.println(said(recover { twiceLeft(min / 2 - 1) }))
+    console.println(said(recover { twice(max) }))
+    console.println(said(recover { twiceLeft(min) }))
+    let big: UInt = 9223372036854775808
+    let fits: UInt = 9223372036854775807
+    console.println("{twiceWide(fits)}")
+    match recover { twiceWide(big) } {
+        ok(value) => console.println("{value}")
+        err(p) => console.println(p.message)
+    }
+    let edge: Int32 = 1073741824
+    match recover { small(edge) } {
+        ok(value) => console.println("{value}")
+        err(p) => console.println(p.message)
+    }
+    console.println("{small(edge - 1)} {small(-edge)}")
+}
+
+// expect-stdout: 42 -42 9223372036854775806 -9223372036854775808
+// expect-stdout: 4611686018427387904 * 2 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 2 * -4611686018427387905 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 9223372036854775807 * 2 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 2 * -9223372036854775808 does not fit in Int (-9223372036854775808 to 9223372036854775807)
+// expect-stdout: 18446744073709551614
+// expect-stdout: 9223372036854775808 * 2 does not fit in UInt (0 to 18446744073709551615)
+// expect-stdout: 2 * 1073741824 does not fit in Int32 (-2147483648 to 2147483647)
+// expect-stdout: 2147483646 -2147483648
