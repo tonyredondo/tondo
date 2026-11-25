@@ -201,6 +201,10 @@ its own, with `gh workflow run CI --ref <branch>`.
   TLS, cryptography and the framing of HTTP stay in their libraries, and an
   optimization changes how they are used. A library that is faster, well
   tested and widely used may replace one; code of our own may not.
+- A change to the scheduler, to the calls of C threads or to how the runtime
+  handles a protocol is reviewed before it merges by a reviewer with a fresh
+  context, given the diff and this file and no one's conclusions. Each of
+  its findings is checked against the code before it is acted on.
 - Nothing that reaches an executable takes its order from a hash map's
   iteration: a build is the same bytes twice, as
   `cargo test -p tondo --test cli a_build_is_the_same_bytes_twice` holds.
