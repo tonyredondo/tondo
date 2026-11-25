@@ -325,7 +325,7 @@ test words::unit::words::countingAPage ... ok
   count     696.2 µs/op  ±34.2%  9622 allocs/op  527160 B/op  6.67M ins/op
 ```
 
-`testing.bench` gives the test what its closure gave, in a run made before
+`testing.bench` gives the test what its closure gave, in a run made after
 the measured ones, and the test asserts it: a benchmark that checks its
 answer fails when a change makes the code faster by breaking it, and one
 that checks nothing gives that change a better row

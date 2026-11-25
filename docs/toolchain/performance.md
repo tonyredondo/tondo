@@ -2141,7 +2141,7 @@ allocated is in the benchmark's row and in `testing.allocations`.
   `testing.keep(value)` keeps a value the closure does not give.
 - **A benchmark that stopped doing its work.** Code that a change broke
   can run faster than code that works, and its row reads as a gain.
-  `testing.bench` gives what its closure gave in a run of its own, before
+  `testing.bench` gives what its closure gave in a run of its own, after
   the measured ones. Assert it, and that change fails the test:
   `assert(testing.bench("sum", () => numbers.sum()) == 499_500)`.
   A comparison reads no row of a test that failed. With `--compiler`, a

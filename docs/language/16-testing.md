@@ -373,10 +373,11 @@ Linux the instructions it executes:
   count 600 words     11.86 µs/op  ±0.1%  0 allocs/op +7 in regions  0 B/op +25680 in regions  217.2k ins/op
 ```
 
-The run whose value `bench` gives is made before the measured ones and is
-not in the row. What each measured run returns is kept, so the work that
-made it is not optimized away. Set up the input outside the closure, so
-that only what is being measured is inside it.
+The run whose value `bench` gives is made after the measured ones and is
+not in the row: nothing of it is alive while they are measured. What each
+measured run returns is kept, so the work that made it is not optimized
+away. Set up the input outside the closure, so that only what is being
+measured is inside it.
 
 ## Fuzzing
 

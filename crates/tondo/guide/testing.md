@@ -134,7 +134,8 @@ test parsing {
 - A test that calls `testing.bench(name, closure)` in its own body is a
   benchmark; anywhere else, in a function, a closure or a suite's setup,
   the call is `E2006`.
-- It gives what the closure gave, in a run made before the measured ones.
+- It gives what the closure gave, in a run made after the measured ones,
+  so that nothing of it is alive while they run.
   Assert it: code that a change makes faster by no longer doing its work
   then fails, where an unchecked benchmark gives it a better row. A
   `String` that nothing checks is `W1018`.
