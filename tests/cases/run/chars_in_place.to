@@ -2,7 +2,8 @@ import std.console
 
 // A text's characters, one after another: an ASCII one read as its byte in
 // place, the others decoded; the offset known within the text reads
-// without its check. Every width, and a text with none.
+// without its check. Every width, and a text with none; and the first and
+// last scalar of each width in a text on the heap, decoded in line.
 
 fn listed(text: String): String {
     var codes: Array[Int] = []
@@ -17,6 +18,7 @@ fn main() {
     console.println(listed("abc"))
     console.println(listed(""))
     console.println(listed("€"))
+    console.println(listed("\u{80}\u{7ff}\u{800}\u{ffff}\u{10000}\u{10ffff}"))
     var letters = ""
     for c in "Tondo".chars() {
         letters = "{c}{letters}"
@@ -28,4 +30,5 @@ fn main() {
 // expect-stdout: 3: [97, 98, 99]
 // expect-stdout: 0: []
 // expect-stdout: 1: [8364]
+// expect-stdout: 6: [128, 2047, 2048, 65535, 65536, 1114111]
 // expect-stdout: odnoT

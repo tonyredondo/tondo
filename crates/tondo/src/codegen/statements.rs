@@ -1007,9 +1007,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         if ty == types::I64 { byte } else { self.e.fb.ins().ireduce(ty, byte) }
     }
 
-    /// The scalar at a byte offset of a text, read in place when it is
-    /// ASCII, as most are; `slow` decodes the others. With `guard`, an
-    /// offset outside the text goes to `slow` too, which says what it is.
+    /// The scalar at a byte offset of a text, decoded inline for valid UTF-8
+    /// (with ASCII on the predicted fast path); `slow` handles guarded
+    /// out-of-bounds, non-in-place short non-ASCII, or non-boundary offsets.
     pub(super) fn decoded(
         &mut self,
         text: ir::Value,
@@ -1018,7 +1018,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         guard: bool,
         in_place: bool,
     ) -> ir::Value {
-        let (in_word, in_block, read, ascii, other, done) = (
+        let (in_word, in_block, read, ascii, non_ascii, two, three_or_four, three, four, other, done) = (
+            self.e.fb.create_block(),
+            self.e.fb.create_block(),
+            self.e.fb.create_block(),
+            self.e.fb.create_block(),
+            self.e.fb.create_block(),
             self.e.fb.create_block(),
             self.e.fb.create_block(),
             self.e.fb.create_block(),
@@ -1027,6 +1032,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             self.e.fb.create_block(),
         );
         self.e.fb.append_block_param(done, types::I32);
+        if in_place && !guard {
+            self.e.fb.set_cold_block(other);
+        }
         if in_place {
             self.e.fb.ins().jump(in_block, &[]);
         } else {
@@ -1057,9 +1065,55 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let address = self.e.fb.ins().iadd(text, offset);
         let byte = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32);
         let below = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, byte, 0x80);
-        self.e.fb.ins().brif(below, ascii, &[], other, &[]);
+        self.e.fb.ins().brif(below, ascii, &[], non_ascii, &[]);
         self.e.fb.switch_to_block(ascii);
         self.e.fb.ins().jump(done, &[byte.into()]);
+        // Non-ASCII UTF-8 in a valid string: continuation bytes (< 0xC2) fall
+        // back to `slow` (which returns U+FFFD); 2-, 3- and 4-byte leads decode
+        // directly without an FFI call.
+        self.e.fb.switch_to_block(non_ascii);
+        let valid_lead = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, byte, 0xC2);
+        let check_two = self.e.fb.create_block();
+        self.e.fb.ins().brif(valid_lead, check_two, &[], other, &[]);
+        self.e.fb.switch_to_block(check_two);
+        let is_two = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, byte, 0xE0);
+        self.e.fb.ins().brif(is_two, two, &[], three_or_four, &[]);
+        self.e.fb.switch_to_block(two);
+        let b1 = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32 + 1);
+        let hi = self.e.fb.ins().band_imm_u(byte, 0x1F);
+        let hi = self.e.fb.ins().ishl_imm_u(hi, 6);
+        let lo = self.e.fb.ins().band_imm_u(b1, 0x3F);
+        let code2 = self.e.fb.ins().bor(hi, lo);
+        self.e.fb.ins().jump(done, &[code2.into()]);
+        self.e.fb.switch_to_block(three_or_four);
+        let is_three = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, byte, 0xF0);
+        self.e.fb.ins().brif(is_three, three, &[], four, &[]);
+        self.e.fb.switch_to_block(three);
+        let b1 = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32 + 1);
+        let b2 = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32 + 2);
+        let p0 = self.e.fb.ins().band_imm_u(byte, 0x0F);
+        let p0 = self.e.fb.ins().ishl_imm_u(p0, 12);
+        let p1 = self.e.fb.ins().band_imm_u(b1, 0x3F);
+        let p1 = self.e.fb.ins().ishl_imm_u(p1, 6);
+        let p2 = self.e.fb.ins().band_imm_u(b2, 0x3F);
+        let code3 = self.e.fb.ins().bor(p0, p1);
+        let code3 = self.e.fb.ins().bor(code3, p2);
+        self.e.fb.ins().jump(done, &[code3.into()]);
+        self.e.fb.switch_to_block(four);
+        let b1 = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32 + 1);
+        let b2 = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32 + 2);
+        let b3 = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32 + 3);
+        let p0 = self.e.fb.ins().band_imm_u(byte, 0x07);
+        let p0 = self.e.fb.ins().ishl_imm_u(p0, 18);
+        let p1 = self.e.fb.ins().band_imm_u(b1, 0x3F);
+        let p1 = self.e.fb.ins().ishl_imm_u(p1, 12);
+        let p2 = self.e.fb.ins().band_imm_u(b2, 0x3F);
+        let p2 = self.e.fb.ins().ishl_imm_u(p2, 6);
+        let p3 = self.e.fb.ins().band_imm_u(b3, 0x3F);
+        let code4 = self.e.fb.ins().bor(p0, p1);
+        let code4 = self.e.fb.ins().bor(code4, p2);
+        let code4 = self.e.fb.ins().bor(code4, p3);
+        self.e.fb.ins().jump(done, &[code4.into()]);
         self.e.fb.switch_to_block(other);
         let decoded = self.e.call_rt(slow, &[text, offset]).unwrap();
         self.e.fb.ins().jump(done, &[decoded.into()]);
