@@ -1591,6 +1591,39 @@ fn a_layout_seed_moves_the_code_and_nothing_else() {
     assert!(moved(false, &plain) > functions / 2 && moved(true, &plain) > data / 2, "against no seed");
 }
 
+/// With no seed, a Release build lays each function out after the one that
+/// calls it first, from `main`: a caller and what it calls lie close.
+#[test]
+fn a_release_build_lays_a_function_after_its_caller() {
+    let source: &[u8] = b"fn last(n: Int): Int {\n    if n <= 0 { 0 } else { last(n - 1) + 1 }\n}\n\n\
+        fn other(n: Int): Int {\n    if n <= 0 { 0 } else { other(n - 2) + 2 }\n}\n\n\
+        fn middle(n: Int): Int {\n    if n <= 0 { 0 } else { middle(n - 1) + last(n) }\n}\n\n\
+        fn first(n: Int): Int {\n    if n <= 0 { 0 } else { first(n - 1) + middle(n) }\n}\n\n\
+        fn main() {\n    if first(5) + other(3) == 0 {\n        panic(\"never\")\n    }\n}\n";
+    let dir = project_at("call-order", &[("main.to", source)]);
+    let built = common::command(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "main.to", "--output", "main"])
+        .env_remove("TONDO_LAYOUT_SEED")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    use object::{Object, ObjectSymbol};
+    let bytes = std::fs::read(dir.join("main")).unwrap();
+    let file = object::File::parse(&*bytes).unwrap();
+    // The program's functions are `tondo_f<n>_<name>`, with Mach-O's `_`.
+    let at = |name: &str| {
+        file.symbols()
+            .find(|symbol| {
+                let named = symbol.name().unwrap_or_default().trim_start_matches('_');
+                named.strip_prefix("tondo_f").and_then(|rest| rest.split_once('_')).is_some_and(|(_, is)| is == name)
+            })
+            .map(|symbol| symbol.address())
+    };
+    let order: Vec<Option<u64>> = ["main", "first", "middle", "last", "other"].iter().map(|name| at(name)).collect();
+    assert!(order.iter().all(Option::is_some) && order.is_sorted(), "{order:x?}");
+}
+
 /// `--no-logpoints`, or `logpoints = false` in a project's `[build]`, builds
 /// a program without the places a logpoint writes its call at, the start of
 /// each line: its functions are smaller, it does what it did, and the build
