@@ -446,7 +446,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Val::Scalar(match self.e.cg.types().kind(self.e.cg.types().repr(collection_ty)) {
                     TyKind::Array(_) | TyKind::Deque(_) => self.e.fb.ins().load(types::I64, flags(), value, 8),
                     TyKind::String => self.e.call_rt(Rt::StrLength, &[value]).unwrap(),
-                    _ => self.e.call_rt(Rt::MapLen, &[value]).unwrap(),
+                    _ => self.e.fb.ins().load(types::I64, flags(), value, MAP_LEN),
                 })
             }
             Rvalue::StrOp(op, operands, span) => {

@@ -78,6 +78,10 @@ const REFLECT_VALUE: i64 = 40;
 /// Size of an array header in the runtime (`ArrayHeader`): `len` is at 8 and
 /// a deque's `head` at 24. An array's `head` is always 0.
 const ARRAY_HEADER: i64 = 32;
+/// Where a map's entries pointer and entry count (`hashes.len`) live in
+/// `MapObject` of the runtime (`maps.rs`).
+const MAP_ENTRIES: i32 = 24;
+const MAP_LEN: i32 = 56;
 /// The bytes a frame keeps for a text made there (`stack.rs`), after its
 /// header: fewer than those of a text whose positions the runtime keeps by
 /// its address, which a frame's room reuses.
