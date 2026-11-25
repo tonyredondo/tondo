@@ -351,6 +351,10 @@ holds to these rules:
   the poll takes: it queues it for a worker's turn (`tasks::poll_soon`).
 - State that two threads change, as "polled now" and "woken meanwhile",
   is one atomic, changed with read-modify-writes on every side.
+- A change to a memory ordering, or to a read made without the lock that
+  guards what it reads, comes with its model or with its reason written
+  beside it, and runs on a real arm64 before its push: what a weaker
+  ordering breaks does not show on x86-64.
 
 `TONDO_WAKES=1` in the environment of a program keeps each task's last
 waits and wakes, which `tondo blocked` and a dump show: a task whose wait
