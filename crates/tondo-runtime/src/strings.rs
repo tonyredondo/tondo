@@ -17,6 +17,23 @@ pub struct Str {
 
 pub(crate) const IMMORTAL: usize = usize::MAX;
 pub(crate) const HEADER: usize = std::mem::size_of::<Str>();
+/// Marks a non-short string header whose UTF-8 bytes live at the pointer
+/// stored at offset `HEADER` (24 bytes) instead of inline: a frame-lent
+/// view (`StrFrameView`), keeping owned `Str` headers at 24 bytes.
+pub(crate) const VIEW_CAP_BIT: usize = 1 << 63;
+
+/// Marks a branch as cold without introducing a function call (preserving leaf
+/// functions and avoiding callee-saved register spills in hot runtime helpers).
+#[cold]
+#[inline(always)]
+fn cold_hint() {}
+
+/// Whether a non-short string header is a view whose bytes live at
+/// `*(s + HEADER)` rather than inline at `s + HEADER`.
+#[inline(always)]
+pub(crate) unsafe fn is_view(s: *const Str) -> bool {
+    unsafe { (*s).cap & VIEW_CAP_BIT != 0 }
+}
 
 /// Heap objects (strings and boxes) currently allocated. Checked at exit when
 /// `TONDO_RT_CHECK_LEAKS` is set, which the compiler's tests use to verify
@@ -186,6 +203,7 @@ impl RegionPieces {
 }
 
 /// The bytes of a string. The caller keeps the string alive.
+#[inline]
 pub unsafe fn str_bytes(s: &impl Word) -> &[u8] {
     let word = s.word();
     if short(word) {
@@ -193,14 +211,20 @@ pub unsafe fn str_bytes(s: &impl Word) -> &[u8] {
         // lowest first.
         return unsafe { std::slice::from_raw_parts(s as *const _ as *const u8, short_len(word)) };
     }
-    unsafe { std::slice::from_raw_parts((word as *const u8).add(HEADER), (*word).len) }
+    unsafe { long_bytes(word) }
 }
 
-/// The bytes of a string that is not short, where its header is. The
-/// caller keeps the string alive.
+/// The bytes of a string that is not short, where its header is (or at
+/// offset `HEADER` for a frame view). The caller keeps the string alive.
 #[inline(always)]
 pub(crate) unsafe fn long_bytes<'a>(s: *const Str) -> &'a [u8] {
-    unsafe { std::slice::from_raw_parts((s as *const u8).add(HEADER), (*s).len) }
+    let ptr = if unsafe { is_view(s) } {
+        cold_hint();
+        unsafe { *((s as *const u8).add(HEADER) as *const *const u8) }
+    } else {
+        unsafe { (s as *const u8).add(HEADER) }
+    };
+    unsafe { std::slice::from_raw_parts(ptr, (*s).len) }
 }
 
 /// A short text: up to `SHORT_MAX` bytes held in its word instead of a
@@ -589,7 +613,12 @@ pub unsafe extern "C" fn tondo_rt_str_retain(s: *const Str) {
     }
     let rc = unsafe { &(*s).rc };
     let counted = match rc.load(Ordering::Relaxed) {
-        IMMORTAL => return,
+        IMMORTAL => {
+            if unsafe { is_view(s) } {
+                runtime_fault("frame string view retained past its frame");
+            }
+            return;
+        }
         piece if piece & PIECE != 0 => unsafe { &(*block_of(s, piece)).count },
         _ => rc,
     };
@@ -730,7 +759,9 @@ pub(crate) unsafe fn scalar_offset(s: *const Str, index: usize) -> Option<usize>
         return (index < short_len(s)).then_some(index);
     }
     let bytes = unsafe { str_bytes(&s) };
-    if bytes.len() < POSITIONED_FROM {
+    // Frame views reuse stack addresses across calls and turns, so their
+    // scalar positions are never cached by header address in `POSITIONS`.
+    if bytes.len() < POSITIONED_FROM || unsafe { is_view(s) } {
         if bytes.is_ascii() {
             return (index < bytes.len()).then_some(index);
         }
@@ -784,7 +815,10 @@ pub(crate) unsafe fn scalar_count(s: *const Str) -> usize {
         return short_len(s);
     }
     let bytes = unsafe { str_bytes(&s) };
-    if bytes.len() >= POSITIONED_FROM && POSITIONED[position_slot(s)].load(Ordering::Relaxed) == s as usize {
+    if bytes.len() >= POSITIONED_FROM
+        && !unsafe { is_view(s) }
+        && POSITIONED[position_slot(s)].load(Ordering::Relaxed) == s as usize
+    {
         let held = POSITIONS[position_slot(s)].lock().unwrap_or_else(|e| e.into_inner());
         if let Some(positions) = held.as_ref().filter(|p| p.text == s as usize && p.len == bytes.len()) {
             return positions.count;
@@ -817,7 +851,19 @@ pub unsafe extern "C" fn tondo_rt_str_eq(a: *const Str, b: *const Str) -> u8 {
     }
     unsafe {
         match (short(a), short(b)) {
-            (false, false) => same(long_bytes(a), long_bytes(b)) as u8,
+            (false, false) => {
+                let n = (*a).len;
+                if n != (*b).len {
+                    return 0;
+                }
+                let (pa, pb) = if ((*a).cap | (*b).cap) & VIEW_CAP_BIT == 0 {
+                    ((a as *const u8).add(HEADER), (b as *const u8).add(HEADER))
+                } else {
+                    cold_hint();
+                    (long_bytes(a).as_ptr(), long_bytes(b).as_ptr())
+                };
+                same(std::slice::from_raw_parts(pa, n), std::slice::from_raw_parts(pb, n)) as u8
+            }
             (true, true) => 0,
             _ => same(str_bytes(&a), str_bytes(&b)) as u8,
         }
@@ -833,7 +879,16 @@ pub unsafe extern "C" fn tondo_rt_str_cmp(a: *const Str, b: *const Str) -> i32 {
     unsafe {
         // Neither short, in one test of both signs.
         if !short((a as usize | b as usize) as *const Str) {
-            return order(long_bytes(a), long_bytes(b)) as i32;
+            let (ab, bb) = if ((*a).cap | (*b).cap) & VIEW_CAP_BIT == 0 {
+                (
+                    std::slice::from_raw_parts((a as *const u8).add(HEADER), (*a).len),
+                    std::slice::from_raw_parts((b as *const u8).add(HEADER), (*b).len),
+                )
+            } else {
+                cold_hint();
+                (long_bytes(a), long_bytes(b))
+            };
+            return order(ab, bb) as i32;
         }
         match short(a) && short(b) {
             true => (bytes(a), short_len(a)).cmp(&(bytes(b), short_len(b))) as i32,
@@ -1141,7 +1196,9 @@ pub unsafe extern "C" fn tondo_rt_str_slice_checked(
 /// unwinds gives, stays none.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_copy_out(s: *mut Str, region: *mut super::regions::Region) -> *mut Str {
-    if (s as isize) <= 0 || unsafe { (*s).rc.load(Ordering::Relaxed) } == IMMORTAL {
+    // A frame view carries `rc == IMMORTAL` so release is a no-op, but it is
+    // not a static literal and must still be copied out.
+    if (s as isize) <= 0 || (!unsafe { is_view(s) } && unsafe { (*s).rc.load(Ordering::Relaxed) } == IMMORTAL) {
         return s;
     }
     let copy = str_in(region, unsafe { str_bytes(&s) });
@@ -1218,6 +1275,92 @@ mod tests {
                 assert_eq!(unsafe { scalar_offset(s, index) }, expected, "{text:?} at {index}");
             }
             unsafe { tondo_rt_str_release(s) };
+        }
+    }
+
+    /// A frame-lent view (`VIEW_CAP_BIT` in `cap`, bytes pointer at offset
+    /// `HEADER`) behaves identically to an owned string across comparisons,
+    /// hashing, scalar counting/indexing (even when its stack slot is reused
+    /// across long Unicode strings), appending, and `copy_out`.
+    #[test]
+    fn frame_view_behaves_like_owned_string() {
+        #[repr(C)]
+        struct StrFrameView {
+            header: Str,
+            data: *const u8,
+        }
+        assert_eq!(std::mem::offset_of!(StrFrameView, data), HEADER);
+
+        let make_view = |slot: &mut StrFrameView, slice: &[u8]| -> *mut Str {
+            slot.header.rc.store(IMMORTAL, Ordering::Relaxed);
+            slot.header.len = slice.len();
+            slot.header.cap = VIEW_CAP_BIT;
+            slot.data = slice.as_ptr();
+            &mut slot.header as *mut Str
+        };
+
+        let mut slot = StrFrameView {
+            header: Str { rc: AtomicUsize::new(IMMORTAL), len: 0, cap: VIEW_CAP_BIT },
+            data: std::ptr::null(),
+        };
+
+        // Empty view matches static EMPTY.
+        let backing = b"   the quick brown fox jumps over the lazy dog   ";
+        let empty = make_view(&mut slot, &backing[3..3]);
+        unsafe {
+            assert!(is_view(empty));
+            assert_eq!(str_len(empty), 0);
+            assert_eq!(str_bytes(&empty), b"");
+            assert_eq!(tondo_rt_str_eq(empty, EMPTY.get()), 1);
+            assert_eq!(tondo_rt_str_cmp(empty, EMPTY.get()), 0);
+            assert_eq!(maps::tondo_rt_str_hash(empty), maps::tondo_rt_str_hash(EMPTY.get()));
+            tondo_rt_str_release(empty);
+        }
+
+        // Non-empty ASCII slice view matches owned string and copies out cleanly.
+        let trimmed = &backing[3..backing.len() - 3];
+        let owned = str_new(trimmed);
+        let view = make_view(&mut slot, trimmed);
+        unsafe {
+            assert_eq!(str_len(view), trimmed.len());
+            assert_eq!(str_bytes(&view), trimmed);
+            assert_eq!(tondo_rt_str_eq(view, owned), 1);
+            assert_eq!(tondo_rt_str_cmp(view, owned), 0);
+            assert_eq!(maps::tondo_rt_str_hash(view), maps::tondo_rt_str_hash(owned));
+            assert_eq!(tondo_rt_str_length(view), trimmed.len() as i64);
+
+            // `copy_out` must copy out of a view, never return the stack pointer.
+            let copied = tondo_rt_str_copy_out(view, std::ptr::null_mut());
+            assert_ne!(copied, view);
+            assert!(!is_view(copied));
+            assert_eq!(str_bytes(&copied), trimmed);
+            tondo_rt_str_release(copied);
+
+            // `append` must copy out without mutating the view or backing bytes.
+            let appended = super::builder::append(view, b"!");
+            assert_ne!(appended, view);
+            assert_eq!(str_bytes(&appended), [trimmed, b"!"].concat());
+            tondo_rt_str_release(appended);
+
+            tondo_rt_str_release(view);
+            tondo_rt_str_release(owned);
+        }
+
+        // Long Unicode views reusing the SAME stack slot address must never
+        // observe stale entries from `POSITIONS`.
+        let first = format!("{}é{}", "a".repeat(40), "ñ".repeat(25));
+        let second = format!("{}😀{}", "b".repeat(30), "日".repeat(20));
+        assert!(first.len() >= POSITIONED_FROM && second.len() >= POSITIONED_FROM);
+        for text in [&first, &second, &first] {
+            let view = make_view(&mut slot, text.as_bytes());
+            let count = text.chars().count();
+            unsafe {
+                assert_eq!(scalar_count(view), count);
+                for idx in [0, 1, 30, 40, 41, count - 1, count] {
+                    let expected = text.char_indices().nth(idx).map(|(at, _)| at);
+                    assert_eq!(scalar_offset(view, idx), expected, "idx={idx}");
+                }
+            }
         }
     }
 }

@@ -516,8 +516,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         return;
                     }
                     StrOp::ByteLength => {
-                        let in_place = self.held_in_place(&operands[0]);
-                        Val::Scalar(self.text_length(values[0], in_place))
+                        debug_assert!(!self.held_in_place(&operands[0]), "ByteLength needs a Str header");
+                        Val::Scalar(self.text_length(values[0], false))
                     }
                     StrOp::ByteAt | StrOp::ByteWithin => {
                         let in_place = self.held_in_place(&operands[0]);
@@ -533,6 +533,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         Val::Scalar(self.stepped(values[0], values[1], in_place))
                     }
                     StrOp::InPlace => Val::Scalar(self.in_place(values[0])),
+                    StrOp::BetweenView => Val::Scalar(self.between_view(values[0], values[1], values[2])),
                 }
             }
             Rvalue::MapOp(op, operands, _) => match op {
@@ -924,6 +925,27 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.by_form(text, in_place, &[types::I64], short, long)[0]
     }
 
+    /// Pointer to the UTF-8 bytes of a non-short text (`Str` or
+    /// `StrFrameView`): `text + STRING_BYTES` on the fast path, or
+    /// `*(text + STRING_BYTES)` in a cold block when `cap < 0`
+    /// (`VIEW_CAP_BIT`).
+    pub(super) fn long_bytes_ptr(&mut self, text: ir::Value) -> ir::Value {
+        let (view, owned, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.append_block_param(done, POINTER);
+        let cap = self.e.fb.ins().load(types::I64, flags(), text, STRING_ROOM);
+        let is_view = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, cap, 0);
+        self.e.fb.ins().brif(is_view, view, &[], owned, &[]);
+        self.e.fb.set_cold_block(view);
+        self.e.fb.switch_to_block(view);
+        let data = self.e.fb.ins().load(POINTER, flags(), text, STRING_BYTES as i32);
+        self.e.fb.ins().jump(done, &[data.into()]);
+        self.e.fb.switch_to_block(owned);
+        let inline = self.e.fb.ins().iadd_imm_s(text, STRING_BYTES);
+        self.e.fb.ins().jump(done, &[inline.into()]);
+        self.e.fb.switch_to_block(done);
+        self.e.fb.block_params(done)[0]
+    }
+
     /// The byte at an offset of a text, read where it is, as a `Byte`. With
     /// the location of `text.byteAt(offset)`, an offset outside the text
     /// panics with `P0001` there, in a cold block; without it, `prove`
@@ -935,6 +957,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         in_place: bool,
         location: Option<ir::Value>,
     ) -> ir::Value {
+        if in_place {
+            debug_assert!(location.is_none(), "guarded ByteAt is never hoisted to InPlace");
+            let address = self.e.fb.ins().iadd(text, offset);
+            return self.e.fb.ins().load(types::I8, flags(), address, 0);
+        }
         let outside = location.map(|_| self.e.fb.create_block());
         let short = |this: &mut Self| {
             if let Some(outside) = outside {
@@ -954,10 +981,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 this.e.fb.ins().brif(inside, read, &[], outside, &[]);
                 this.e.fb.switch_to_block(read);
             }
-            let address = this.e.fb.ins().iadd(text, offset);
-            vec![this.e.fb.ins().load(types::I8, flags(), address, STRING_BYTES as i32)]
+            let base = this.long_bytes_ptr(text);
+            let address = this.e.fb.ins().iadd(base, offset);
+            vec![this.e.fb.ins().load(types::I8, flags(), address, 0)]
         };
-        let byte = self.by_form(text, in_place, &[types::I8], short, long)[0];
+        let byte = self.by_form(text, false, &[types::I8], short, long)[0];
         let (Some(outside), Some(location)) = (outside, location) else { return byte };
         // The panic, which returns when a `recover` stops it: the check
         // after this statement goes on from there, with a byte of 0.
@@ -973,28 +1001,75 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.block_params(merged)[0]
     }
 
-    /// Whether an operand is a local that holds a text in place.
+    /// Whether an operand is a local that holds a text's raw bytes pointer
+    /// (`StrOp::InPlace`).
     pub(super) fn held_in_place(&self, operand: &Operand) -> bool {
         matches!(operand, Operand::Copy(place) if place.path.is_empty() && self.in_place[place.local.0 as usize])
     }
 
-    /// `StrOp::InPlace`: a text of its own as it is, and a short one in a
-    /// header the frame keeps, whose bytes are its word, as a literal's
-    /// header that counts nothing.
+    /// `StrOp::InPlace`: raw `*const u8` pointer to a text's UTF-8 bytes,
+    /// resolved once before a loop (`hoist`). A short text stores its word in
+    /// an 8-byte frame slot; a `StrFrameView` loads `*(text + STRING_BYTES)`
+    /// in a cold block; an owned `Str` adds `STRING_BYTES`.
     fn in_place(&mut self, text: ir::Value) -> ir::Value {
-        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, STRING_BYTES as u32 + 8, 3);
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3);
         let slot = self.e.fb.create_sized_stack_slot(data);
         let short = |this: &mut Self| {
+            let bytes = this.e.fb.ins().stack_addr(POINTER, slot, 0);
+            this.e.fb.ins().store(flags(), text, bytes, 0);
+            vec![bytes]
+        };
+        let long = |this: &mut Self| vec![this.long_bytes_ptr(text)];
+        self.by_form(text, false, &[POINTER], short, long)[0]
+    }
+
+    /// `StrOp::BetweenView`: a zero-copy view of `source` between valid UTF-8
+    /// byte offsets `start` and `end`, stored in a 32-byte `StrFrameView` slot
+    /// in the current frame (`stack`). Short sources are sliced inline in
+    /// registers; view sources flatten to depth 1 through `long_bytes_ptr`.
+    fn between_view(&mut self, source: ir::Value, start: ir::Value, end: ir::Value) -> ir::Value {
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, STRING_BYTES as u32 + 8, 3);
+        let slot = self.e.fb.create_sized_stack_slot(data);
+        let len = self.e.fb.ins().isub(end, start);
+        let short = |this: &mut Self| {
+            let (non_empty, empty, done) =
+                (this.e.fb.create_block(), this.e.fb.create_block(), this.e.fb.create_block());
+            this.e.fb.append_block_param(done, POINTER);
+            let is_empty = this.e.fb.ins().icmp_imm_s(IntCC::Equal, len, 0);
+            this.e.fb.ins().brif(is_empty, empty, &[], non_empty, &[]);
+            this.e.fb.switch_to_block(empty);
+            let empty_str = this.e.string_ptr("");
+            this.e.fb.ins().jump(done, &[empty_str.into()]);
+            this.e.fb.switch_to_block(non_empty);
+            let start_bits = this.e.fb.ins().ishl_imm_u(start, 3);
+            let shifted = this.e.fb.ins().ushr(source, start_bits);
+            let len_bits = this.e.fb.ins().ishl_imm_u(len, 3);
+            let sixty_four = this.e.fb.ins().iconst(types::I64, 64);
+            let drop_bits = this.e.fb.ins().isub(sixty_four, len_bits);
+            let all_ones = this.e.fb.ins().iconst(types::I64, -1);
+            let mask = this.e.fb.ins().ushr(all_ones, drop_bits);
+            let bytes = this.e.fb.ins().band(shifted, mask);
+            let header_len = this.e.fb.ins().ishl_imm_u(len, 56);
+            let mark = this.e.fb.ins().iconst(types::I64, i64::MIN);
+            let header = this.e.fb.ins().bor(header_len, mark);
+            let word = this.e.fb.ins().bor(bytes, header);
+            this.e.fb.ins().jump(done, &[word.into()]);
+            this.e.fb.switch_to_block(done);
+            vec![this.e.fb.block_params(done)[0]]
+        };
+        let long = |this: &mut Self| {
+            let base = this.long_bytes_ptr(source);
+            let bytes = this.e.fb.ins().iadd(base, start);
             let header = this.e.fb.ins().stack_addr(POINTER, slot, 0);
-            let length = this.short_length(text);
             let immortal = this.e.fb.ins().iconst(types::I64, IMMORTAL as i64);
+            let view_cap = this.e.fb.ins().iconst(types::I64, VIEW_CAP_BIT);
             this.e.fb.ins().store(flags(), immortal, header, 0);
-            this.e.fb.ins().store(flags(), length, header, STRING_LENGTH);
-            this.e.fb.ins().store(flags(), length, header, STRING_ROOM);
-            this.e.fb.ins().store(flags(), text, header, STRING_BYTES as i32);
+            this.e.fb.ins().store(flags(), len, header, STRING_LENGTH);
+            this.e.fb.ins().store(flags(), view_cap, header, STRING_ROOM);
+            this.e.fb.ins().store(flags(), bytes, header, STRING_BYTES as i32);
             vec![header]
         };
-        self.by_form(text, false, &[POINTER], short, |_| vec![text])[0]
+        self.by_form(source, false, &[POINTER], short, long)[0]
     }
 
     /// The length of a short text, in bits 56 to 62 of its word.
@@ -1042,7 +1117,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             self.e.fb.set_cold_block(other);
         }
         if in_place {
-            self.e.fb.ins().jump(in_block, &[]);
+            debug_assert!(!guard, "guarded scalarAt is never hoisted to InPlace");
+            self.e.fb.ins().jump(read, &[]);
         } else {
             let marked = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, text, 0);
             self.e.fb.ins().brif(marked, in_word, &[], in_block, &[]);
@@ -1068,8 +1144,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             self.e.fb.ins().jump(read, &[]);
         }
         self.e.fb.switch_to_block(read);
-        let address = self.e.fb.ins().iadd(text, offset);
-        let byte = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32);
+        let base = if in_place { text } else { self.long_bytes_ptr(text) };
+        let address = self.e.fb.ins().iadd(base, offset);
+        let byte = self.e.fb.ins().uload8(types::I32, flags(), address, 0);
         let below = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, byte, 0x80);
         self.e.fb.ins().brif(below, ascii, &[], non_ascii, &[]);
         self.e.fb.switch_to_block(ascii);
@@ -1085,7 +1162,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let is_two = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, byte, 0xE0);
         self.e.fb.ins().brif(is_two, two, &[], three_or_four, &[]);
         self.e.fb.switch_to_block(two);
-        let b1 = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32 + 1);
+        let b1 = self.e.fb.ins().uload8(types::I32, flags(), address, 1);
         let hi = self.e.fb.ins().band_imm_u(byte, 0x1F);
         let hi = self.e.fb.ins().ishl_imm_u(hi, 6);
         let lo = self.e.fb.ins().band_imm_u(b1, 0x3F);
@@ -1095,8 +1172,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let is_three = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, byte, 0xF0);
         self.e.fb.ins().brif(is_three, three, &[], four, &[]);
         self.e.fb.switch_to_block(three);
-        let b1 = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32 + 1);
-        let b2 = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32 + 2);
+        let b1 = self.e.fb.ins().uload8(types::I32, flags(), address, 1);
+        let b2 = self.e.fb.ins().uload8(types::I32, flags(), address, 2);
         let p0 = self.e.fb.ins().band_imm_u(byte, 0x0F);
         let p0 = self.e.fb.ins().ishl_imm_u(p0, 12);
         let p1 = self.e.fb.ins().band_imm_u(b1, 0x3F);
@@ -1106,9 +1183,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let code3 = self.e.fb.ins().bor(code3, p2);
         self.e.fb.ins().jump(done, &[code3.into()]);
         self.e.fb.switch_to_block(four);
-        let b1 = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32 + 1);
-        let b2 = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32 + 2);
-        let b3 = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32 + 3);
+        let b1 = self.e.fb.ins().uload8(types::I32, flags(), address, 1);
+        let b2 = self.e.fb.ins().uload8(types::I32, flags(), address, 2);
+        let b3 = self.e.fb.ins().uload8(types::I32, flags(), address, 3);
         let p0 = self.e.fb.ins().band_imm_u(byte, 0x07);
         let p0 = self.e.fb.ins().ishl_imm_u(p0, 18);
         let p1 = self.e.fb.ins().band_imm_u(b1, 0x3F);
@@ -1121,7 +1198,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let code4 = self.e.fb.ins().bor(code4, p3);
         self.e.fb.ins().jump(done, &[code4.into()]);
         self.e.fb.switch_to_block(other);
-        let decoded = self.e.call_rt(slow, &[text, offset]).unwrap();
+        let decoded = if in_place {
+            let fallback = if slow == Rt::StrDecode { 0 } else { 0xFFFD };
+            self.e.fb.ins().iconst(types::I32, fallback)
+        } else {
+            self.e.call_rt(slow, &[text, offset]).unwrap()
+        };
         self.e.fb.ins().jump(done, &[decoded.into()]);
         self.e.fb.switch_to_block(done);
         self.e.fb.block_params(done)[0]
@@ -1137,8 +1219,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.append_block_param(done, types::I64);
         let short = |this: &mut Self| vec![this.short_byte(text, offset, types::I64)];
         let long = |this: &mut Self| {
-            let address = this.e.fb.ins().iadd(text, offset);
-            vec![this.e.fb.ins().uload8(types::I64, flags(), address, STRING_BYTES as i32)]
+            let base = if in_place { text } else { this.long_bytes_ptr(text) };
+            let address = this.e.fb.ins().iadd(base, offset);
+            vec![this.e.fb.ins().uload8(types::I64, flags(), address, 0)]
         };
         let lead = self.by_form(text, in_place, &[types::I64], short, long)[0];
         let one = self.e.fb.ins().iadd_imm_s(offset, 1);

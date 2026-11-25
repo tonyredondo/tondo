@@ -847,10 +847,15 @@ pub enum StrOp {
     Decode,
     /// The byte offset after the scalar at a byte offset; used by iteration.
     Next,
-    /// The same text, with its bytes where a read in place finds them: a
-    /// short one in a header the frame keeps (`hoist`), so that a loop that
-    /// reads it does not ask each turn which it is.
+    /// The raw `*const u8` pointer to a text's UTF-8 bytes, resolved once
+    /// before a loop (`hoist`), so unchecked byte and scalar reads inside the
+    /// loop load directly at `[base + offset]` without checking short or view
+    /// forms each turn.
     InPlace,
+    /// A zero-copy view of a text between byte offsets `start` and `end`
+    /// (known valid UTF-8 boundaries within the text), stored in a 32-byte
+    /// `StrFrameView` slot in the current frame (`stack`).
+    BetweenView,
     /// `text.bytes()`: its UTF-8 bytes.
     Bytes,
     /// `String.fromBytes(bytes)` as `String?`: `none` when not UTF-8.

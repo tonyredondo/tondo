@@ -3093,7 +3093,7 @@ fn trimmedBytes(texts: Array[String]): Int {
 }
 ";
     let counts = counts_of("trimmed_counted", tests);
-    assert_eq!(counts, [("same".to_string(), 0), ("padded".to_string(), 300), ("paddedRead".to_string(), 0)]);
+    assert_eq!(counts, [("same".to_string(), 0), ("padded".to_string(), 0), ("paddedRead".to_string(), 0)]);
 }
 
 /// A text of up to seven bytes is held in its word and allocates nothing,

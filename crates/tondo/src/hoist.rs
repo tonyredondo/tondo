@@ -139,6 +139,7 @@ fn hoist_body(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
             in_place(body, types, inside, *head, *before, &written, &addressed);
         }
     }
+    reuse_in_place(body, &predecessors, &addressed, loans);
     let mut said = Vec::new();
     for (.., span) in left {
         if !said.contains(&span) {
@@ -168,7 +169,7 @@ fn in_place(
     let mut placed: Vec<(Local, Local)> = Vec::new();
     for block in (0..body.blocks.len()).filter(|&block| inside[block]) {
         for index in 0..body.blocks[block].stmts.len() {
-            let Statement::Assign(_, rvalue, span) = &body.blocks[block].stmts[index] else { continue };
+            let Statement::Assign(_, rvalue, _) = &body.blocks[block].stmts[index] else { continue };
             let Some(text) = read_in_place(rvalue) else { continue };
             let at = text.0 as usize;
             // A local made since `written` and `addressed` were, as one a loop
@@ -177,15 +178,19 @@ fn in_place(
             if changed || !matches!(types.kind(types.repr(body.locals[at])), TyKind::String) {
                 continue;
             }
-            let span = *span;
             let held = match placed.iter().find(|(of, _)| *of == text) {
                 Some(&(_, held)) => held,
                 None => {
                     let held = Local(body.locals.len() as u32);
                     body.locals.push(body.locals[at]);
                     body.names.push(None);
-                    let rvalue = Rvalue::StrOp(StrOp::InPlace, vec![Operand::local(text)], span);
-                    body.blocks[before].stmts.push(Statement::Assign(Place::local(held), Box::new(rvalue), span));
+                    let rvalue =
+                        Rvalue::StrOp(StrOp::InPlace, vec![Operand::local(text)], crate::source::Span::default());
+                    body.blocks[before].stmts.push(Statement::Assign(
+                        Place::local(held),
+                        Box::new(rvalue),
+                        crate::source::Span::default(),
+                    ));
                     placed.push((text, held));
                     held
                 }
@@ -204,21 +209,180 @@ fn in_place(
     }
 }
 
-/// The text a statement reads in place, a whole local: its length, a byte
-/// or a scalar at an offset, or the offset after one; or the text a loop
-/// inside this one put in place.
+/// Reuses a dominating `StrOp::InPlace(text)` for a later `StrOp::InPlace(text)`
+/// when `text` is unchanged on every path between them (for example across
+/// sequential loops over the same text, as in `trimWhitespace`).
+fn reuse_in_place(body: &mut Body, predecessors: &[Vec<usize>], addressed: &[bool], loans: &[Vec<bool>]) {
+    // Collect `(block, stmt_index, dst, text)` for every `InPlace(text)` in the body.
+    let mut defs: Vec<(usize, usize, Local, Local)> = Vec::new();
+    for (b, data) in body.blocks.iter().enumerate() {
+        for (i, stmt) in data.stmts.iter().enumerate() {
+            if let Statement::Assign(place, rvalue, _) = stmt
+                && place.path.is_empty()
+                && let Rvalue::StrOp(StrOp::InPlace, args, _) = &**rvalue
+                && let [Operand::Copy(src)] = &args[..]
+                && src.path.is_empty()
+            {
+                defs.push((b, i, place.local, src.local));
+            }
+        }
+    }
+    if defs.len() < 2 {
+        return;
+    }
+    // Check if any `text` appears at least twice.
+    let has_dup = defs.iter().enumerate().any(|(i, &(_, _, _, t))| defs[..i].iter().any(|&(_, _, _, t0)| t0 == t));
+    if !has_dup {
+        return;
+    }
+    let count = body.blocks.len();
+    let words = count.div_ceil(64);
+    // Compute reachability from entry 0 and dominators via bitsets.
+    let mut reachable = vec![false; count];
+    let mut stack = vec![0usize];
+    reachable[0] = true;
+    while let Some(b) = stack.pop() {
+        for to in successors(&body.blocks[b].terminator) {
+            if !reachable[to] {
+                reachable[to] = true;
+                stack.push(to);
+            }
+        }
+    }
+    let mut dom = vec![vec![u64::MAX; words]; count];
+    dom[0].fill(0);
+    dom[0][0] = 1;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for b in 1..count {
+            if !reachable[b] {
+                continue;
+            }
+            let mut next = vec![u64::MAX; words];
+            let mut any_pred = false;
+            for &p in &predecessors[b] {
+                if !reachable[p] {
+                    continue;
+                }
+                any_pred = true;
+                for (a, &d) in next.iter_mut().zip(&dom[p]) {
+                    *a &= d;
+                }
+            }
+            if !any_pred {
+                continue;
+            }
+            next[b / 64] |= 1u64 << (b % 64);
+            if next != dom[b] {
+                dom[b] = next;
+                changed = true;
+            }
+        }
+    }
+    let dominates = |a: usize, b: usize| reachable[b] && ((dom[b][a / 64] >> (a % 64)) & 1 != 0);
+
+    let modifies = |stmt: &Statement, text: Local| -> bool {
+        match stmt {
+            Statement::Assign(place, rvalue, _) => {
+                if place.local == text {
+                    return true;
+                }
+                match &**rvalue {
+                    Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) => target.local == text,
+                    Rvalue::Concat(pieces) => pieces.iter().any(|p| matches!(p, Piece::Taken(at) if at.local == text)),
+                    Rvalue::Call(Callee::Fn(id), args) => args.iter().enumerate().any(|(at, arg)| {
+                        matches!(arg, Operand::Copy(p) if p.local == text)
+                            && loans.get(id.0 as usize).and_then(|l| l.get(at)).copied().unwrap_or(true)
+                    }),
+                    Rvalue::CallIndirect(..) => {
+                        let mut used = Vec::new();
+                        rvalue_uses(rvalue, &mut used);
+                        used.contains(&text)
+                    }
+                    _ => false,
+                }
+            }
+            Statement::Release(place) | Statement::Moved(place) | Statement::DeferPush(_, place) => place.local == text,
+            Statement::Lend(alias, place) => *alias == text || place.local == text,
+            Statement::LendAt(alias, _) | Statement::Clear(alias) => *alias == text,
+            Statement::OsrLoad(_) => true,
+            Statement::Retain(_) | Statement::DeferPop | Statement::Failing(..) => false,
+        }
+    };
+
+    let mut replacements: Vec<(usize, usize, Local, Local)> = Vec::new();
+    for &(b2, i2, h2, text) in &defs {
+        if !reachable[b2] || addressed.get(text.0 as usize).copied().unwrap_or(true) {
+            continue;
+        }
+        // Find a dominating earlier `InPlace(text)` with no modification of `text`
+        // on any path from it to `(b2, i2)`.
+        let reused = defs.iter().find_map(|&(b1, i1, h1, t1)| {
+            if t1 != text || (b1 == b2 && i1 >= i2) || !dominates(b1, b2) {
+                return None;
+            }
+            if b1 == b2 {
+                let dirty = body.blocks[b1].stmts[i1 + 1..i2].iter().any(|s| modifies(s, text));
+                return (!dirty).then_some(h1);
+            }
+            if body.blocks[b1].stmts[i1 + 1..].iter().any(|s| modifies(s, text))
+                || body.blocks[b2].stmts[..i2].iter().any(|s| modifies(s, text))
+            {
+                return None;
+            }
+            // Walk backward from `b2`'s predecessors, stopping at `b1` (which
+            // dominates `b2`, so every path from `b1` to `b2` stays inside this set).
+            let mut seen = vec![false; count];
+            seen[b1] = true;
+            let mut work = Vec::new();
+            for &p in &predecessors[b2] {
+                if reachable[p] && !seen[p] {
+                    seen[p] = true;
+                    work.push(p);
+                }
+            }
+            while let Some(cur) = work.pop() {
+                if body.blocks[cur].stmts.iter().any(|s| modifies(s, text)) {
+                    return None;
+                }
+                for &p in &predecessors[cur] {
+                    if reachable[p] && !seen[p] {
+                        seen[p] = true;
+                        work.push(p);
+                    }
+                }
+            }
+            Some(h1)
+        });
+        if let Some(h1) = reused {
+            replacements.push((b2, i2, h2, h1));
+        }
+    }
+    let count = replacements.len();
+    for &(b, i, _, mut h1) in &replacements {
+        while let Some(&(_, _, _, root)) = replacements.iter().find(|&&(_, _, h2, _)| h2 == h1) {
+            h1 = root;
+        }
+        if let Statement::Assign(_, rvalue, span) = &mut body.blocks[b].stmts[i] {
+            **rvalue = Rvalue::Use(Operand::local(h1));
+            *span = crate::source::Span::default();
+        }
+    }
+    if count > 0 {
+        crate::mir_text::note(body, "hoist", || format!("reused {count} dominating text(s) already in place"));
+    }
+}
+
+/// The text a statement reads unchecked in place, a whole local: a byte or a
+/// scalar at an offset known within it, or the offset after one; or the text a
+/// loop inside this one put in place. Guarded reads and `ByteLength` still
+/// need the `Str` header, so they keep the original local.
 fn read_in_place(rvalue: &Rvalue) -> Option<Local> {
     let operands = match rvalue {
-        Rvalue::StrOp(
-            StrOp::ByteLength | StrOp::ByteAt | StrOp::ByteWithin | StrOp::Decode | StrOp::Next | StrOp::InPlace,
-            operands,
-            _,
-        ) => operands,
+        Rvalue::StrOp(StrOp::ByteWithin | StrOp::Decode | StrOp::Next | StrOp::InPlace, operands, _) => operands,
         Rvalue::Call(Callee::Std(crate::hir::StdFn::Native(index)), operands)
-            if matches!(
-                crate::hir::NATIVES[*index as usize].symbol,
-                "tondo_rt_text_byte_at" | "tondo_rt_text_scalar_at"
-            ) =>
+            if matches!(crate::hir::NATIVES[*index as usize].name, "byteWithin" | "scalarWithin") =>
         {
             operands
         }

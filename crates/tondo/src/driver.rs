@@ -1893,7 +1893,9 @@ pub fn optimizations(
                 // Where a region puts what the library makes: what reaches
                 // the program, or all of it when the kind is asked for.
                 true if remark.kind == "region" && !remark.given && kind != Some("region") => Vec::new(),
-                true if matches!(remark.kind, "checked" | "heap" | "call" | "counted" | "grown" | "region") => {
+                true if matches!(remark.kind, "checked" | "heap" | "call" | "counted" | "grown" | "region")
+                    || remark.kind == "frame" && kind == Some("frame") =>
+                {
                     // The copy it is of, when its pass knows it; else every
                     // copy of its place.
                     let copies = match remark.scope {

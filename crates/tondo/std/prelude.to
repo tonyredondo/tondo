@@ -316,8 +316,8 @@ pub fn String.splitOnce(self, separator: String): (String, String)? {
     if at < 0 {
         return none
     }
-    let before = textNative.between(self, 0, at)
-    let after = textNative.between(self, at + separator.byteLength(), total)
+    let before = textNative.betweenWithin(self, 0, at)
+    let after = textNative.betweenWithin(self, at + separator.byteLength(), total)
     (before, after)
 }
 
@@ -450,7 +450,7 @@ pub fn String.removePrefix(self, prefix: String): String {
     if prefix.isEmpty() or not self.startsWith(prefix) {
         return self
     }
-    textNative.between(self, prefix.byteLength(), self.byteLength())
+    textNative.betweenWithin(self, prefix.byteLength(), self.byteLength())
 }
 
 /// The text without `suffix` at its end, if it has it.
@@ -458,7 +458,7 @@ pub fn String.removeSuffix(self, suffix: String): String {
     if suffix.isEmpty() or not self.endsWith(suffix) {
         return self
     }
-    textNative.between(self, 0, self.byteLength() - suffix.byteLength())
+    textNative.betweenWithin(self, 0, self.byteLength() - suffix.byteLength())
 }
 
 /// The scalar index of the last `needle`.

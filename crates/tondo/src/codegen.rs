@@ -94,6 +94,10 @@ const SYNC_VALUE: i32 = 16;
 const STRING_LENGTH: i32 = 8;
 const STRING_ROOM: i32 = 16;
 const STRING_BYTES: i64 = 24;
+/// Marks a `StrFrameView` in its `cap` (`STRING_ROOM`) field (`VIEW_CAP_BIT`
+/// of the runtime): its UTF-8 bytes pointer lives at `STRING_BYTES` (24)
+/// rather than inline.
+const VIEW_CAP_BIT: i64 = i64::MIN;
 /// A text of one to seven bytes is its word, with no block: its sign marks
 /// it, as no address of user space has it, its length is in bits 56 to 62
 /// and its bytes are the low ones, the first lowest (`strings::short_text`
@@ -4668,15 +4672,22 @@ fn in_place(body: &Body) -> Vec<bool> {
     if !held.contains(&true) {
         return held;
     }
-    // Copies of those, as long as every one of their assignments is.
+    // Copies of those (including multi-hop chains across nested loops), as
+    // long as every one of their assignments is.
     let mut copied = vec![false; body.locals.len()];
-    for (place, rvalue) in assignments() {
-        if let Rvalue::Use(Operand::Copy(from)) = rvalue
-            && place.path.is_empty()
-            && from.path.is_empty()
-            && held[from.local.0 as usize]
-        {
-            copied[place.local.0 as usize] = true;
+    let mut growing = true;
+    while growing {
+        growing = false;
+        for (place, rvalue) in assignments() {
+            if let Rvalue::Use(Operand::Copy(from)) = rvalue
+                && place.path.is_empty()
+                && from.path.is_empty()
+                && (held[from.local.0 as usize] || copied[from.local.0 as usize])
+                && !copied[place.local.0 as usize]
+            {
+                copied[place.local.0 as usize] = true;
+                growing = true;
+            }
         }
     }
     let mut changed = true;
