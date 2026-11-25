@@ -530,12 +530,216 @@ impl Prover<'_> {
         {
             entry = pinned;
         }
-        for (block, facts) in entry.into_iter().enumerate() {
-            if let Some(facts) = facts {
+        for (block, facts) in entry.iter().enumerate() {
+            if let Some(facts) = facts.clone() {
                 self.exits(block, facts, true);
             }
         }
+        self.combine_range_checks(&entry);
         self.reasons
+    }
+
+    /// Fuses `if x < 0 { goto exit } else if x >= bound { goto exit } else { body }`
+    /// into a single unsigned comparison `if (x as u64) >= (bound as u64) { goto exit } else { body }`
+    /// when `bound` is known non-negative (such as an array/string length or a
+    /// proven non-negative local/constant). Runs after `exits(..., true)` so
+    /// bounds and exact arithmetic inside `body` were already proved.
+    fn combine_range_checks(&mut self, entry: &[Option<Facts>]) {
+        use crate::ast::BinOp;
+        let count = self.body.blocks.len();
+        let mut uses = vec![0u32; self.body.locals.len()];
+        let (mut ubuf, mut dbuf) = (Vec::new(), Vec::new());
+        for block in &self.body.blocks {
+            for stmt in &block.stmts {
+                ubuf.clear();
+                dbuf.clear();
+                statement_locals(stmt, &mut ubuf, &mut dbuf);
+                for &l in &ubuf {
+                    uses[l.0 as usize] += 1;
+                }
+            }
+            ubuf.clear();
+            terminator_uses(&block.terminator, &mut ubuf);
+            for &l in &ubuf {
+                uses[l.0 as usize] += 1;
+            }
+        }
+        fn follow(blocks: &[BlockData], mut b: BlockId) -> BlockId {
+            for _ in 0..blocks.len().min(64) {
+                let data = &blocks[b.0 as usize];
+                if data.stmts.is_empty()
+                    && let Terminator::Goto(next) = data.terminator
+                    && next != b
+                {
+                    b = next;
+                    continue;
+                }
+                break;
+            }
+            b
+        }
+        fn same_stmt(a: &Statement, b: &Statement) -> bool {
+            match (a, b) {
+                (Statement::Clear(x), Statement::Clear(y)) => x == y,
+                (Statement::Retain(x), Statement::Retain(y))
+                | (Statement::Release(x), Statement::Release(y))
+                | (Statement::Moved(x), Statement::Moved(y)) => x == y,
+                (Statement::Assign(pa, ra, _), Statement::Assign(pb, rb, _)) if pa == pb => match (&**ra, &**rb) {
+                    (Rvalue::Use(x), Rvalue::Use(y)) => x == y,
+                    (Rvalue::Discriminant(x), Rvalue::Discriminant(y)) => x == y,
+                    (Rvalue::Binary(oa, x1, x2), Rvalue::Binary(ob, y1, y2))
+                    | (Rvalue::Exact(oa, x1, x2), Rvalue::Exact(ob, y1, y2)) => oa == ob && x1 == y1 && x2 == y2,
+                    (Rvalue::Variant(va, xa), Rvalue::Variant(vb, xb)) => va == vb && xa == xb,
+                    (Rvalue::Aggregate(xa), Rvalue::Aggregate(xb)) => xa == xb,
+                    (Rvalue::Cancelled, Rvalue::Cancelled)
+                    | (Rvalue::Unwinding, Rvalue::Unwinding)
+                    | (Rvalue::UnwindingOwn, Rvalue::UnwindingOwn) => true,
+                    _ => false,
+                },
+                _ => false,
+            }
+        }
+        fn same_target(blocks: &[BlockData], a: BlockId, b: BlockId, depth: u8) -> bool {
+            let (a, b) = (follow(blocks, a), follow(blocks, b));
+            if a == b {
+                return true;
+            }
+            if depth == 0 {
+                return false;
+            }
+            let (ba, bb) = (&blocks[a.0 as usize], &blocks[b.0 as usize]);
+            if ba.stmts.len() != bb.stmts.len() || !ba.stmts.iter().zip(&bb.stmts).all(|(x, y)| same_stmt(x, y)) {
+                return false;
+            }
+            match (&ba.terminator, &bb.terminator) {
+                (Terminator::Goto(na), Terminator::Goto(nb)) => same_target(blocks, *na, *nb, depth - 1),
+                (Terminator::Branch(ca, ta, fa), Terminator::Branch(cb, tb, fb)) => {
+                    ca == cb && same_target(blocks, *ta, *tb, depth - 1) && same_target(blocks, *fa, *fb, depth - 1)
+                }
+                (Terminator::Return(ra), Terminator::Return(rb)) => ra == rb,
+                (Terminator::Unreachable, Terminator::Unreachable) => true,
+                _ => false,
+            }
+        }
+        for b1 in 0..count {
+            let Terminator::Branch(Operand::Copy(Place { local: c1, path }), t1, f1) = &self.body.blocks[b1].terminator
+            else {
+                continue;
+            };
+            if !path.is_empty() || uses[c1.0 as usize] != 1 {
+                continue;
+            }
+            let (c1, t1, f1) = (*c1, *t1, *f1);
+            let Some(Statement::Assign(Place { local: def1, path: p1 }, r1, _)) = self.body.blocks[b1].stmts.last()
+            else {
+                continue;
+            };
+            if *def1 != c1 || !p1.is_empty() {
+                continue;
+            }
+            let (x, neg, non_neg) = match &**r1 {
+                Rvalue::Binary(
+                    BinOp::Lt,
+                    Operand::Copy(Place { local: x, path: px }),
+                    Operand::Const(Const::Int(0, ty)),
+                ) if px.is_empty() && self.int(*x) && self.types.repr(*ty) == Ty::INT => (*x, t1, f1),
+                Rvalue::Binary(
+                    BinOp::Ge,
+                    Operand::Copy(Place { local: x, path: px }),
+                    Operand::Const(Const::Int(0, ty)),
+                ) if px.is_empty() && self.int(*x) && self.types.repr(*ty) == Ty::INT => (*x, f1, t1),
+                _ => continue,
+            };
+            let b2 = non_neg.0 as usize;
+            if b2 == b1 {
+                continue;
+            }
+            let exit = follow(&self.body.blocks, neg);
+            let Terminator::Branch(Operand::Copy(Place { local: c2, path: pc2 }), t2, f2) =
+                &self.body.blocks[b2].terminator
+            else {
+                continue;
+            };
+            if !pc2.is_empty() || uses[c2.0 as usize] != 1 {
+                continue;
+            }
+            let (c2, t2, f2) = (*c2, *t2, *f2);
+            let b2_stmts = &self.body.blocks[b2].stmts;
+            let Some((Statement::Assign(Place { local: def2, path: p2 }, r2, span2), prefix)) = b2_stmts.split_last()
+            else {
+                continue;
+            };
+            if *def2 != c2 || !p2.is_empty() {
+                continue;
+            }
+            let is_x =
+                |op: &Operand| matches!(op, Operand::Copy(Place { local, path }) if path.is_empty() && *local == x);
+            let same_exit =
+                |target: BlockId| same_target(&self.body.blocks, follow(&self.body.blocks, target), exit, 8);
+            let (bound, out_exit, out_body) = match &**r2 {
+                Rvalue::Binary(BinOp::Ge, a, b) if is_x(a) && same_exit(t2) => (b.clone(), t2, f2),
+                Rvalue::Binary(BinOp::Lt, a, b) if is_x(a) && same_exit(f2) => (b.clone(), f2, t2),
+                Rvalue::Binary(BinOp::Le, a, b) if is_x(b) && same_exit(t2) => (a.clone(), t2, f2),
+                Rvalue::Binary(BinOp::Gt, a, b) if is_x(b) && same_exit(f2) => (a.clone(), f2, t2),
+                _ => continue,
+            };
+            // Prefix statements in `b2` must only read pure collection/string lengths
+            // without overwriting `x`.
+            let mut non_neg_locals: Vec<Local> = Vec::new();
+            let mut prefix_ok = true;
+            for stmt in prefix {
+                match stmt {
+                    Statement::Assign(Place { local, path }, rv, _)
+                        if path.is_empty()
+                            && *local != x
+                            && *local != c1
+                            && match &**rv {
+                                Rvalue::Length(Operand::Copy(p)) => p.path.is_empty(),
+                                Rvalue::StrOp(crate::hir::StrOp::ByteLength, args, _) => {
+                                    matches!(&args[..], [Operand::Copy(p)] if p.path.is_empty())
+                                }
+                                _ => false,
+                            } =>
+                    {
+                        non_neg_locals.push(*local);
+                    }
+                    _ => {
+                        prefix_ok = false;
+                        break;
+                    }
+                }
+            }
+            if !prefix_ok {
+                continue;
+            }
+            // Confirm `bound >= 0`.
+            let bound_non_neg = match &bound {
+                Operand::Const(Const::Int(v, ty)) => *v >= 0 && self.types.repr(*ty) == Ty::INT,
+                Operand::Copy(Place { local: bl, path }) if path.is_empty() && self.int(*bl) => {
+                    non_neg_locals.contains(bl)
+                        || entry[b2]
+                            .as_ref()
+                            .is_some_and(|facts| facts.bound(Node::Zero, Node::Int(*bl)).is_some_and(|k| k <= 0))
+                }
+                _ => false,
+            };
+            if !bound_non_neg {
+                continue;
+            }
+            let cloned_prefix: Vec<Statement> = prefix.to_vec();
+            let span2 = *span2;
+            self.body.blocks[b1].stmts.pop();
+            self.body.blocks[b1].stmts.extend(cloned_prefix);
+            self.body.blocks[b1].stmts.push(Statement::Assign(
+                Place::local(c1),
+                Box::new(Rvalue::Exact(BinOp::Ge, Operand::local(x), bound)),
+                span2,
+            ));
+            self.body.blocks[b1].terminator = Terminator::Branch(Operand::local(c1), out_exit, out_body);
+            crate::mir_text::note(self.body, "prove", || {
+                format!("bb{b1}: `l{} < 0` and bb{b2}'s test of it against its bound, one unsigned test", x.0)
+            });
+        }
     }
 
     /// The facts at the start of each block, and what reaches each block

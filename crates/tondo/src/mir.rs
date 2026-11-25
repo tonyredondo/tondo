@@ -387,7 +387,8 @@ pub enum Rvalue {
     /// A sum, difference or product of `Int`s that cannot overflow, as
     /// `prove` shows or a length less one is, without the check; or a
     /// quotient or remainder of one `prove` showed is not negative by a
-    /// power of two, without signs.
+    /// power of two, without signs; or `>=` or `<` without signs, as
+    /// `prove` makes of `x < 0` and `x >= bound` with a bound not negative.
     Exact(BinOp, Operand, Operand),
     Call(Callee, Vec<Operand>),
     /// A named function as a `fn(...)` value: a static object.

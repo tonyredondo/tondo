@@ -1,0 +1,41 @@
+import std.console
+
+// `i < 0` and `i >= bound` that leave the same way, with a bound that is
+// not negative, are one test in a release build: `i` without its sign is
+// under the bound only when it is in range, as a negative `i` is then
+// past every bound. Each side of each test, and the ends of `Int`.
+
+fn at(values: Array[Int], i: Int): Int? {
+    if i < 0 or i >= values.length() {
+        return none
+    }
+    values[i]
+}
+
+fn inside(i: Int, limit: Int): String {
+    if limit < 0 {
+        return "no limit"
+    }
+    if i < 0 or i >= limit {
+        return "outside"
+    }
+    "inside"
+}
+
+fn main() {
+    let values = [10, 20, 30]
+    let min = -9223372036854775807 - 1
+    let max = 9223372036854775807
+    for i in [-1, 0, 2, 3, min, max] {
+        console.println("{i}: {at(values, i)} {inside(i, 3)} {inside(i, 0)}")
+    }
+    console.println("{inside(max - 1, max)} {inside(max, max)} {inside(0, -1)}")
+}
+
+// expect-stdout: -1: none outside outside
+// expect-stdout: 0: some(10) inside outside
+// expect-stdout: 2: some(30) inside outside
+// expect-stdout: 3: none outside outside
+// expect-stdout: -9223372036854775808: none outside outside
+// expect-stdout: 9223372036854775807: none outside outside
+// expect-stdout: inside outside no limit

@@ -209,7 +209,10 @@ fn rvalue_text(rvalue: &Rvalue, types: &Types) -> String {
             let checked = if checked { "  (checked)" } else { "" };
             format!("{} {} {}{checked}", operand_text(a), op.as_str(), operand_text(b))
         }
-        Rvalue::Exact(op, a, b) => format!("{} {} {}", operand_text(a), op.as_str(), operand_text(b)),
+        Rvalue::Exact(op, a, b) => {
+            let unsigned = if matches!(op, BinOp::Ge | BinOp::Lt) { "  (unsigned)" } else { "" };
+            format!("{} {} {}{unsigned}", operand_text(a), op.as_str(), operand_text(b))
+        }
         Rvalue::Increment(operand) => format!("{} + 1", operand_text(operand)),
         Rvalue::Call(callee, operands) => format!("call {callee:?}({})", list(operands)),
         Rvalue::CallIndirect(callee, operands) => format!("call {}({})", operand_text(callee), list(operands)),

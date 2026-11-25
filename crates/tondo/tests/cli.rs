@@ -1481,6 +1481,29 @@ fn a_test_each_way_decided_is_threaded_through_the_join() {
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "18 2 1 -1\n4 10 6\n");
 }
 
+/// `i < 0` and `i >= values.length()` that leave the same way are one test
+/// of `i` without its sign once `prove` has gone through them, which the
+/// dump of the MIR says (`tests/cases/run/range_checks_fused.to` holds
+/// what each side gives).
+#[test]
+fn prove_makes_two_tests_of_a_range_one() {
+    let source: &[u8] = b"fn at(values: Array[Int], i: Int): Int? {\n    if i < 0 or i >= values.length() {\n        \
+        return none\n    }\n    values[i]\n}\n\nfn main() {\n    _ = at([1, 2], 5)\n}\n";
+    let dir = project_at("fused-range", &[("main.to", source)]);
+    let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "main.to", "--output", "main"])
+        .env("TONDO_DUMP_MIR", "at@prove")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let dumped = String::from_utf8_lossy(&ran.stderr);
+    assert!(ran.status.success(), "{dumped}");
+    assert!(
+        dumped.contains("one unsigned test") && dumped.contains(">= ") && dumped.contains("(unsigned)"),
+        "{dumped}"
+    );
+}
+
 /// A part of a parameter copied into a local the function only reads needs
 /// no count of its own, as the caller keeps the parameter: a specialized
 /// adapter's array and closures, and a copy of a record that walks its

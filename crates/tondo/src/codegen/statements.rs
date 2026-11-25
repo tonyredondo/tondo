@@ -867,6 +867,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     BinOp::Sub => ins.isub(a, b),
                     BinOp::Div => ins.udiv(a, b),
                     BinOp::Rem => ins.urem(a, b),
+                    BinOp::Ge => ins.icmp(IntCC::UnsignedGreaterThanOrEqual, a, b),
+                    BinOp::Lt => ins.icmp(IntCC::UnsignedLessThan, a, b),
                     _ => ins.imul(a, b),
                 })
             }
