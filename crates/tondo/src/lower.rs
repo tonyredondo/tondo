@@ -94,6 +94,121 @@ pub fn drop_dead_checks(bodies: &mut [Body]) {
     }
 }
 
+/// Drops checks for task cancellation that inlining left with no waiting
+/// operation reaching them: when an adapter's closure is opened in a later
+/// round of inlining, the outer cancellation check stays behind with no
+/// wait left before it.
+pub fn drop_dead_cancellations(bodies: &mut [Body]) {
+    let waits = waiting(bodies);
+    for body in bodies.iter_mut() {
+        if body.osr.is_some() || body.blocks.is_empty() {
+            continue;
+        }
+        let has_cancelled = body.blocks.iter().any(|b| cancellation_check(b).is_some());
+        if !has_cancelled {
+            continue;
+        }
+        let checks: Vec<Option<(BlockId, BlockId)>> = body.blocks.iter().map(cancellation_check).collect();
+        let count = body.blocks.len();
+        let mut reachable = vec![false; count];
+        let mut entry_dirty = vec![false; count];
+        reachable[0] = true;
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for b in 0..count {
+                if !reachable[b] {
+                    continue;
+                }
+                let check = checks[b];
+                let end = if check.is_some() { body.blocks[b].stmts.len() - 2 } else { body.blocks[b].stmts.len() };
+                let mut dirty = entry_dirty[b];
+                if !dirty {
+                    for statement in &body.blocks[b].stmts[..end] {
+                        if statement_waits(statement, &waits) {
+                            dirty = true;
+                            break;
+                        }
+                    }
+                }
+                let mut mark = |to: usize, d: bool| {
+                    if !reachable[to] || (d && !entry_dirty[to]) {
+                        reachable[to] = true;
+                        entry_dirty[to] |= d;
+                        changed = true;
+                    }
+                };
+                if let Some((unwind, next)) = check {
+                    if dirty {
+                        mark(unwind.0 as usize, true);
+                    }
+                    mark(next.0 as usize, false);
+                } else {
+                    for to in crate::mir::successors(&body.blocks[b].terminator) {
+                        mark(to, dirty);
+                    }
+                }
+            }
+        }
+        for b in 0..count {
+            if !reachable[b] {
+                continue;
+            }
+            let Some((_, next)) = checks[b] else { continue };
+            let end = body.blocks[b].stmts.len() - 2;
+            let dirty = entry_dirty[b] || body.blocks[b].stmts[..end].iter().any(|s| statement_waits(s, &waits));
+            if !dirty {
+                // Said at the call it followed, which waits no more once
+                // what it calls is inlined.
+                let span = match &body.blocks[b].stmts[end] {
+                    Statement::Assign(_, _, span) => *span,
+                    _ => Span::default(),
+                };
+                body.blocks[b].stmts.truncate(end);
+                body.blocks[b].terminator = Terminator::Goto(next);
+                crate::mir_text::remark(body, span, "unchecked", || {
+                    "checks for no cancellation after it: nothing it does waits once inlined".to_string()
+                });
+            }
+        }
+    }
+}
+
+/// If `block` ends with a compiler-inserted `cancellation_point`, returns
+/// `(unwind, next)`.
+fn cancellation_check(block: &BlockData) -> Option<(BlockId, BlockId)> {
+    let [.., Statement::Assign(asked, rvalue, _), Statement::Assign(is, compare, _)] = &block.stmts[..] else {
+        return None;
+    };
+    let Terminator::Branch(Operand::Copy(condition), unwind, next) = &block.terminator else {
+        return None;
+    };
+    let checks = matches!(**rvalue, Rvalue::Cancelled)
+        && matches!(
+            &**compare,
+            Rvalue::Binary(crate::ast::BinOp::Eq, Operand::Copy(read), Operand::Const(Const::Int(1, _)))
+                if *read == *asked
+        )
+        && *condition == *is;
+    checks.then_some((*unwind, *next))
+}
+
+/// Whether `statement` may wait (or leave an inlined callee on cancellation),
+/// requiring a subsequent `cancellation_point` to check for cancellation.
+fn statement_waits(statement: &Statement, waits: &[bool]) -> bool {
+    match statement {
+        Statement::Assign(_, rvalue, _) => match &**rvalue {
+            Rvalue::Call(hir::Callee::Fn(id), _) => waits[id.0 as usize],
+            Rvalue::Call(hir::Callee::Std(f), _) => f.waits() || matches!(f, hir::StdFn::CancelReturn),
+            Rvalue::CallIndirect(..) | Rvalue::CallOsr(..) | Rvalue::Select(..) => true,
+            Rvalue::TaskOp(op, ..) => op.waits(),
+            _ => false,
+        },
+        Statement::OsrLoad(_) => true,
+        _ => false,
+    }
+}
+
 /// Whether a statement may panic and return, when a `recover` stops it:
 /// a call, an operation of the runtime, checked arithmetic or a read or
 /// write by an index (15.9).

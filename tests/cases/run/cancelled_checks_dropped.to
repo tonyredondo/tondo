@@ -1,0 +1,36 @@
+import std.console
+import std.time
+
+// An iterator chain whose closures never wait drops the cancellation checks
+// inlining left behind; one whose closure waits still stops under `within`.
+
+fn sumPure(numbers: Array[Int]): Int {
+    numbers.iter().map(n => n * 2).filter(n => n % 3 == 0).sumBy(n => n)
+}
+
+fn sumWaiting(numbers: Array[Int]): Int {
+    numbers
+        .iter()
+        .map((n) {
+            time.sleep(time.milliseconds(50))
+            n * 2
+        })
+        .sumBy(n => n)
+}
+
+fn main() {
+    let numbers = [1, 2, 3, 4, 5, 6]
+    console.println("{sumPure(numbers)}")
+    let stopped = within time.milliseconds(20) {
+        sumWaiting(numbers)
+    }
+    match stopped {
+        ok(n) => console.println("finished {n}")
+        err(_) => console.println("timed out")
+    }
+}
+
+// expect-stdout: 18
+// expect-stdout: timed out
+// expect-optimization: 8:5 unchecked checks for no cancellation after it
+// expect-no-optimization: 12:5 unchecked checks for no cancellation after it
