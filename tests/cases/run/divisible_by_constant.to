@@ -1,0 +1,130 @@
+import std.console
+
+// `x % d == 0` and `!= 0` by a constant that is not a power of two are a
+// product by `d`'s inverse and one comparison: every answer is the one a
+// division gives, `x / d * d == x`, over a range of each sign and at the
+// ends of `Int`, `Int32` and `UInt`, by odd and even constants and a
+// negative one. A division or remainder by a constant other than zero,
+// or -1 when signed, has no check, and gives what it gave.
+
+fn by3(x: Int): Bool {
+    x % 3 == 0
+}
+
+fn notBy7(x: Int): Bool {
+    x % 7 != 0
+}
+
+fn by10(x: Int): Bool {
+    x % 10 == 0
+}
+
+fn byMinus6(x: Int): Bool {
+    x % -6 == 0
+}
+
+fn by1000(x: Int): Bool {
+    x % 1000 == 0
+}
+
+fn small3(x: Int32): Bool {
+    x % 3 == 0
+}
+
+fn wide7(x: UInt): Bool {
+    x % 7 == 0
+}
+
+fn wide12(x: UInt): Bool {
+    x % 12 == 0
+}
+
+fn agrees(x: Int): Bool {
+    by3(x) == (x / 3 * 3 == x) and
+        notBy7(x) == (x / 7 * 7 != x) and
+        by10(x) == (x / 10 * 10 == x) and
+        byMinus6(x) == (x / -6 * -6 == x) and
+        by1000(x) == (x / 1000 * 1000 == x)
+}
+
+fn agreesSmall(x: Int32): Bool {
+    small3(x) == (x / 3 * 3 == x)
+}
+
+fn agreesWide(x: UInt): Bool {
+    wide7(x) == (x / 7 * 7 == x) and wide12(x) == (x / 12 * 12 == x)
+}
+
+fn main() {
+    var (threes, sevens, tens, sixes, thousands, wrong) = (0, 0, 0, 0, 0, 0)
+    for x in -3000..=3000 {
+        if by3(x) {
+            threes += 1
+        }
+        if not notBy7(x) {
+            sevens += 1
+        }
+        if by10(x) {
+            tens += 1
+        }
+        if byMinus6(x) {
+            sixes += 1
+        }
+        if by1000(x) {
+            thousands += 1
+        }
+        if not agrees(x) {
+            wrong += 1
+        }
+    }
+    console.println("{threes} {sevens} {tens} {sixes} {thousands} {wrong}")
+    let max = 9223372036854775807
+    let min = -9223372036854775807 - 1
+    var edges = 0
+    for delta in 0..64 {
+        for x in [min + delta, max - delta] {
+            if not agrees(x) {
+                edges += 1
+            }
+        }
+    }
+    let small: Array[Int32] = [
+        -2147483648,
+        -2147483647,
+        -2147483646,
+        -3,
+        0,
+        3,
+        2147483645,
+        2147483646,
+        2147483647,
+    ]
+    let wide: Array[UInt] = [
+        0,
+        7,
+        12,
+        84,
+        18446744073709551615,
+        18446744073709551614,
+        18446744073709551608,
+        9223372036854775807,
+    ]
+    for x in small {
+        if not agreesSmall(x) {
+            edges += 1
+        }
+    }
+    for x in wide {
+        if not agreesWide(x) {
+            edges += 1
+        }
+    }
+    console.println(
+        "{edges} {by3(min)} {by3(max)} {small3(-2147483646)} {wide7(18446744073709551615)}",
+    )
+    console.println("{-17 % 7} {17 % -7} {min % 7} {min / 7} {max % -1000} {-17 / 3}")
+}
+
+// expect-stdout: 2001 857 601 1001 7 0
+// expect-stdout: 0 false false true false
+// expect-stdout: -3 3 -1 -1317624576693539401 807 -5

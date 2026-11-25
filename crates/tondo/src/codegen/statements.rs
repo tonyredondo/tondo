@@ -857,7 +857,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 if *divisor > 1 && !(*divisor as u128).is_power_of_two() =>
             {
                 let a = self.scalar(left);
-                Val::Scalar(self.divided_unsigned(*op, a, *divisor as u64))
+                let result = self.divided_unsigned(*op, a, *divisor as u64);
+                if *op == BinOp::Rem && *divisor >= 3 && (*divisor as u128) <= u64::MAX as u128 {
+                    self.rem_consts.insert(result, (a, *divisor as u64, false));
+                }
+                Val::Scalar(result)
             }
             Rvalue::Exact(op, left, right) => {
                 let (a, b) = (self.scalar(left), self.scalar(right));

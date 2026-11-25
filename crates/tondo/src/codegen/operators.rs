@@ -363,6 +363,44 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         Some((self.e.fb.ins().imul(a, b), out, None))
     }
 
+    /// Lowers `(x % d) == 0` / `(x % d) != 0` for a non-power-of-two constant `d`
+    /// to a multiplicative-inverse range test (`rotr(x * inv + off, k) <= bound`),
+    /// avoiding a 128-bit multiply + shift + subtract on the hot path.
+    fn divisible_by_const(&mut self, op: BinOp, left: &Operand, right: &Operand, a: Val, b: Val) -> Option<ir::Value> {
+        let (Val::Scalar(a), Val::Scalar(b)) = (a, b) else { return None };
+        let is_zero = |fb: &FunctionBuilder, v: ir::Value| {
+            let ir::ValueDef::Result(inst, _) = fb.func.dfg.value_def(v) else { return false };
+            matches!(fb.func.dfg.insts[inst], ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } if imm.bits() == 0)
+        };
+        let is_unnamed_temp = |operand: &Operand| matches!(operand, Operand::Copy(Place { local, path }) if path.is_empty() && self.body.names[local.0 as usize].is_none());
+        let rem_val = if is_zero(&self.e.fb, b) && is_unnamed_temp(left) {
+            a
+        } else if is_zero(&self.e.fb, a) && is_unnamed_temp(right) {
+            b
+        } else {
+            return None;
+        };
+        let &(dividend, d_abs, signed) = self.rem_consts.get(&rem_val)?;
+        let clif = self.e.fb.func.dfg.value_type(dividend);
+        if clif != types::I32 && clif != types::I64 {
+            return None;
+        }
+        let (inv, offset, rot_k, bound) = divisibility_params(clif.bits(), d_abs, signed);
+        let inv_val = self.e.int_const(clif, inv as i128);
+        let mut q = self.e.fb.ins().imul(dividend, inv_val);
+        if offset != 0 {
+            let off_val = self.e.int_const(clif, offset as i128);
+            q = self.e.fb.ins().iadd(q, off_val);
+        }
+        if rot_k != 0 {
+            let k_val = self.e.fb.ins().iconst(types::I32, i64::from(rot_k));
+            q = self.e.fb.ins().rotr(q, k_val);
+        }
+        let bound_val = self.e.int_const(clif, bound as i128);
+        let cc = if op == BinOp::Eq { IntCC::UnsignedLessThanOrEqual } else { IntCC::UnsignedGreaterThan };
+        Some(self.e.fb.ins().icmp(cc, q, bound_val))
+    }
+
     pub(super) fn binary(&mut self, op: BinOp, left: &Operand, right: &Operand, span: Span) -> ir::Value {
         let ty = self.operand_ty(left);
         let right_ty = self.operand_ty(right);
@@ -373,6 +411,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
         if matches!(op, BinOp::Eq | BinOp::Ne) {
             let (a, b) = (self.operand(left), self.operand(right));
+            if let Some(div) = self.divisible_by_const(op, left, right, a, b) {
+                return div;
+            }
             // Integers, characters and booleans differ by one comparison,
             // which a branch on it takes as is.
             let types = self.e.cg.types();
@@ -494,8 +535,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 result
             }
             BinOp::Div | BinOp::Rem => {
-                let zero = self.e.fb.ins().icmp_imm_s(IntCC::Equal, b, 0);
-                self.panic_values_if(zero, 3, span, |_| (detail, a, b, ty));
+                let const_divisor = match right {
+                    Operand::Const(Const::Int(c, _)) => Some(*c),
+                    _ => None,
+                };
+                if const_divisor.is_none_or(|c| c == 0) {
+                    let zero = self.e.fb.ins().icmp_imm_s(IntCC::Equal, b, 0);
+                    self.panic_values_if(zero, 3, span, |_| (detail, a, b, ty));
+                }
                 let int = types.as_int(ty).unwrap();
                 let clif = int_type(int);
                 // Cranelift does not divide 128 bits: the runtime does.
@@ -505,13 +552,40 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     this.int128_call(Rt::Int128Divide, &[remainder, signed], a, divisor).0
                 };
                 if !signed {
-                    return match (wide, op) {
+                    let res = match (wide, op) {
                         (true, _) => divide(self, b),
                         (_, BinOp::Div) => self.e.fb.ins().udiv(a, b),
                         _ => self.e.fb.ins().urem(a, b),
                     };
+                    if op == BinOp::Rem
+                        && !wide
+                        && (clif == types::I32 || clif == types::I64)
+                        && let Some(c) = const_divisor
+                        && c >= 3
+                        && c <= u64::MAX as i128
+                        && !(c as u64).is_power_of_two()
+                    {
+                        self.rem_consts.insert(res, (a, c as u64, false));
+                    }
+                    return res;
                 }
                 // MIN / -1 overflows; MIN % -1 is 0 (spec 18.3).
+                if !wide && const_divisor.is_some_and(|c| c != 0 && c != -1) {
+                    if op == BinOp::Div {
+                        return self.e.fb.ins().sdiv(a, b);
+                    }
+                    let res = self.e.fb.ins().srem(a, b);
+                    if (clif == types::I32 || clif == types::I64)
+                        && let Some(c) = const_divisor
+                        && c != int.min()
+                    {
+                        let d_abs = c.unsigned_abs() as u64;
+                        if d_abs >= 3 && !d_abs.is_power_of_two() {
+                            self.rem_consts.insert(res, (a, d_abs, true));
+                        }
+                    }
+                    return res;
+                }
                 let min = self.e.int_const(clif, int.min());
                 let minus_one = self.e.int_const(clif, -1);
                 let is_min = self.e.fb.ins().icmp(IntCC::Equal, a, min);
@@ -571,4 +645,93 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 /// is checked by the range of the other factor (`multiplied`).
 pub(crate) fn by_range(c: i128, bits: u32) -> bool {
     bits <= 64 && c >= 2 && c < 1 << (bits - 2) && ((c as u64).is_power_of_two() || [3, 5, 7, 9].contains(&c))
+}
+
+/// Parameters `(inv, offset, rot_k, bound)` to test `x % d == 0` for `d_abs >= 3`
+/// not a power of two (Granlund & Montgomery / Hacker's Delight Ch. 10):
+/// `rotr(x * inv + offset, rot_k) <= bound` (unsigned).
+fn divisibility_params(bits: u32, d_abs: u64, signed: bool) -> (u64, u64, u32, u64) {
+    debug_assert!(bits == 32 || bits == 64);
+    debug_assert!(d_abs >= 3 && !d_abs.is_power_of_two());
+    let mask: u64 = if bits == 32 { u32::MAX as u64 } else { u64::MAX };
+    let k = d_abs.trailing_zeros();
+    let odd = d_abs >> k;
+    let mut inv = odd;
+    for _ in 0..5 {
+        inv = inv.wrapping_mul(2u64.wrapping_sub(odd.wrapping_mul(inv)));
+    }
+    inv &= mask;
+    if !signed {
+        (inv, 0, k, mask / d_abs)
+    } else {
+        let min_s: i128 = if bits == 32 { i32::MIN as i128 } else { i64::MIN as i128 };
+        let max_s: i128 = if bits == 32 { i32::MAX as i128 } else { i64::MAX as i128 };
+        let d = d_abs as i128;
+        let min_q = min_s / d;
+        let max_q = max_s / d;
+        let offset = (((-min_q) as u64) << k) & mask;
+        let bound = (max_q - min_q) as u64;
+        (inv, offset, k, bound)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::divisibility_params;
+
+    #[test]
+    fn divisibility_params_match_exact_remainder() {
+        for &d in &[3u64, 5, 6, 7, 9, 10, 12, 15, 24, 100, 1000, i32::MAX as u64] {
+            let (inv, off, k, bound) = divisibility_params(32, d, true);
+            let test_i32 = |x: i32| {
+                let q = (x as u32).wrapping_mul(inv as u32).wrapping_add(off as u32).rotate_right(k);
+                assert_eq!(q <= bound as u32, x % (d as i32) == 0, "i32 x={x} d={d}");
+            };
+            for x in -500..=500 {
+                test_i32(x);
+            }
+            for delta in 0..=30 {
+                test_i32(i32::MIN + delta);
+                test_i32(i32::MAX - delta);
+            }
+
+            let (inv, off, k, bound) = divisibility_params(32, d, false);
+            let test_u32 = |x: u32| {
+                let q = x.wrapping_mul(inv as u32).wrapping_add(off as u32).rotate_right(k);
+                assert_eq!(q <= bound as u32, x.is_multiple_of(d as u32), "u32 x={x} d={d}");
+            };
+            for x in 0..=500 {
+                test_u32(x);
+            }
+            for delta in 0..=30 {
+                test_u32(u32::MAX - delta);
+            }
+        }
+        for &d in &[3u64, 5, 6, 7, 9, 10, 12, 15, 24, 100, 1000, i64::MAX as u64] {
+            let (inv, off, k, bound) = divisibility_params(64, d, true);
+            let test_i64 = |x: i64| {
+                let q = (x as u64).wrapping_mul(inv).wrapping_add(off).rotate_right(k);
+                assert_eq!(q <= bound, x % (d as i64) == 0, "i64 x={x} d={d}");
+            };
+            for x in -500..=500 {
+                test_i64(x);
+            }
+            for delta in 0..=30 {
+                test_i64(i64::MIN + delta);
+                test_i64(i64::MAX - delta);
+            }
+
+            let (inv, off, k, bound) = divisibility_params(64, d, false);
+            let test_u64 = |x: u64| {
+                let q = x.wrapping_mul(inv).wrapping_add(off).rotate_right(k);
+                assert_eq!(q <= bound, x.is_multiple_of(d), "u64 x={x} d={d}");
+            };
+            for x in 0..=500 {
+                test_u64(x);
+            }
+            for delta in 0..=30 {
+                test_u64(u64::MAX - delta);
+            }
+        }
+    }
 }
