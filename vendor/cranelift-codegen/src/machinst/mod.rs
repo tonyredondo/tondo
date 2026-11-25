@@ -298,6 +298,12 @@ pub trait MachInst: Clone + Debug {
     /// for tail calls that don't return to the caller.
     fn call_type(&self) -> CallType;
 
+    /// Tondo: whether this instruction is a real call rather than a patchable
+    /// no-op site, used to keep slow calling arms off the fast path.
+    fn is_real_call(&self) -> bool {
+        self.call_type() != CallType::None
+    }
+
     /// Should this instruction's clobber-list be included in the
     /// clobber-set?
     fn is_included_in_clobbers(&self) -> bool;

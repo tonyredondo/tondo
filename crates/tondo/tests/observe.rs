@@ -4729,6 +4729,52 @@ fn a_logpoint_reads_a_running_release_build() {
     assert!(status.code() == Some(143) || status.success(), "{status:?}");
 }
 
+/// A way that calls is laid out after the rest of a Release function, so
+/// that the way that does not falls through: a logpoint on its lines reads
+/// the values there, where they are in that order.
+#[test]
+fn a_logpoint_reads_a_way_laid_out_apart() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("logpoint-apart");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.time\n\nfn total(picks: Array[Int], round: Int): Int {\n    \
+        var sum = 0\n    var scale = 3\n    for pick in picks {\n        if pick < 5 {\n            scale += 1\n            \
+        continue\n        }\n        console.println(\"far {pick} {round}\")\n        sum += 100 / (pick - 4) * scale\n        \
+        scale += 1\n    }\n    sum\n}\n\nfn main() {\n    console.println(\"ready\")\n    let _ = console.flush()\n    \
+        var round = 0\n    for round < 3000 {\n        _ = total([0, 2, 5, 9, 1], round)\n        round += 1\n        \
+        time.sleep(time.milliseconds(5))\n    }\n}\n";
+    std::fs::write(dir.join("apart.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        common::command(tondo_bin).args(["build", "apart.to", "--output", "apart"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    // The way that calls comes after the function's return.
+    let code = common::command(tondo_bin).args(["asm", "apart.to", "total"]).current_dir(&dir).output().unwrap();
+    let code = String::from_utf8_lossy(&code.stdout).into_owned();
+    let (returns, way) = (code.find(" ret\n"), code.find("apart.to:13 "));
+    assert!(matches!((returns, way), (Some(returns), Some(way)) if returns < way), "{code}");
+    let mut child =
+        common::command(dir.join("apart")).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    output.read_line(&mut line).unwrap();
+    let pid = child.id().to_string();
+    let found = common::command(tondo_bin)
+        .args(["logpoint", &pid, "apart.to:13", "{sum} {scale} {pick}", "--max", "2", "--json"])
+        .output()
+        .unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(found.status.success(), "{found:?}");
+    let found: Value = serde_json::from_slice(&found.stdout).unwrap();
+    let mut read: Vec<&str> = found["hits"].as_array().unwrap().iter().filter_map(|h| h["text"].as_str()).collect();
+    read.sort();
+    assert_eq!(read, ["0 5 5", "500 6 9"], "{found}");
+}
+
 /// A logpoint on a line after one that gives a binding a new value, which
 /// the optimized code may make later: the binding reads `?` there, never
 /// the value it had before. One on a line after the values are made, past
