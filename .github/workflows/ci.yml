@@ -140,6 +140,71 @@ jobs:
 
   # The release `tondo` of each platform, built and packed while the tests
   # run, with the runtime the tests' job keeps.
+  # Each case built by this tondo and by the tondo of the commit this one
+  # follows, a pull request's merge base or a push's `before`, both release
+  # compilers: a build more than twice as long, past a second, fails, and
+  # the summary names the case, both times and how many times longer.
+  build-times:
+    name: build times (x86_64-linux-gnu)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: The commit this one follows
+        id: base
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            base=$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD)
+          elif [ "${{ github.event_name }}" = push ] && ! echo "${{ github.event.before }}" | grep -q '^0*$'; then
+            base="${{ github.event.before }}"
+          else
+            base=$(git rev-parse HEAD^)
+          fi
+          echo "commit=$base" >> "$GITHUB_OUTPUT"
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build-times
+      - uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-22.04-x86_64-linux-gnu-release
+      # The tondo of that commit, built once for each commit.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/tondo/compiler/${{ steps.base.outputs.commit }}
+          key: base-compiler-${{ steps.base.outputs.commit }}
+      - run: cargo test --release --workspace --test cases --no-run
+      # Built here when no run of main kept it, some ten minutes.
+      - name: The tondo of ${{ steps.base.outputs.commit }}
+        run: |
+          against=$(target/release/tondo compiler "${{ steps.base.outputs.commit }}" | tail -1)
+          echo "TONDO_CASES_BUILD_AGAINST=$against" >> "$GITHUB_ENV"
+      - if: ${{ !cancelled() }}
+        uses: ./.github/actions/runtime
+        with:
+          label: ubuntu-22.04-x86_64-linux-gnu-release
+          save: true
+      - run: cargo test --release --workspace --test cases cases 2>&1 | tee "$RUNNER_TEMP/cases.log"
+      - if: failure()
+        run: |
+          {
+            echo "### Cases whose build is slower than at ${{ steps.base.outputs.commit }}"
+            grep -o '[^ ]*\.to: its build took .*' "$RUNNER_TEMP/cases.log" || echo "none: the failure is another"
+          } >> "$GITHUB_STEP_SUMMARY"
+      # This commit's tondo, kept for the run of the push that follows it,
+      # whose `before` it is.
+      - if: ${{ !cancelled() && github.event_name == 'push' }}
+        run: mkdir -p ~/.cache/tondo/compiler/${{ github.sha }} && cp target/release/tondo ~/.cache/tondo/compiler/${{ github.sha }}/
+      - if: ${{ !cancelled() && github.event_name == 'push' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/tondo/compiler/${{ github.sha }}
+          key: base-compiler-${{ github.sha }}
+
   package:
     name: package (${{ matrix.os }}, ${{ matrix.target }})
     strategy:

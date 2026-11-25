@@ -65,7 +65,13 @@
 //! should wait for a word fails, and says when it stood. With the checker
 //! on, as in the debug step, its runtime also stops one thread at a time
 //! where a seed of the same run says (`TONDO_RT_STALLS`), as a busy machine
-//! runs one thread late while the others go on.
+//! runs one thread late while the others go on. With
+//! `TONDO_CASES_BUILD_AGAINST`, the path of another `tondo`, as the one of
+//! `main` (`tondo compiler <revision>`), each case is built with it too, and
+//! fails if its own build took more than twice as long and over a second:
+//! the line says both times and how many times longer, so that a slower
+//! compiler is named by the case it slows and never reads as a timeout.
+//! Both are release compilers, so it is run with `cargo test --release`.
 //!
 //! Each directory under `tests/projects` is a project built as a whole,
 //! with the expectations written in any of its files.
@@ -179,18 +185,22 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
     let binary = scratch.join(own(path)).join(path.file_stem().unwrap());
     std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
     // From its directory, so that locations read `case.to:4:5`.
-    let mut build = common::command(compiler);
-    build
-        .current_dir(path.parent().unwrap())
-        .arg("build")
-        .arg(path.file_name().unwrap())
-        .arg("--output")
-        .arg(&binary)
-        .args(std::env::var_os("TONDO_CASES_STATIC").filter(|_| !expect.no_static).map(|_| "--static"))
-        .args(std::env::var_os("TONDO_CASES_DEBUG").or(std::env::var_os("TONDO_CASES_REPLAY")).map(|_| "--debug"))
-        .args(std::env::var_os("TONDO_CASES_LIVE").map(|_| "--live"))
-        .args(extra)
-        .env("XDG_CACHE_HOME", scratch.join("cache"));
+    let builds = |compiler: &Path, binary: &Path| {
+        let mut build = common::command(compiler);
+        build
+            .current_dir(path.parent().unwrap())
+            .arg("build")
+            .arg(path.file_name().unwrap())
+            .arg("--output")
+            .arg(binary)
+            .args(std::env::var_os("TONDO_CASES_STATIC").filter(|_| !expect.no_static).map(|_| "--static"))
+            .args(std::env::var_os("TONDO_CASES_DEBUG").or(std::env::var_os("TONDO_CASES_REPLAY")).map(|_| "--debug"))
+            .args(std::env::var_os("TONDO_CASES_LIVE").map(|_| "--live"))
+            .args(extra)
+            .env("XDG_CACHE_HOME", scratch.join("cache"));
+        build
+    };
+    let mut build = builds(Path::new(compiler), &binary);
     let coverage = std::env::var_os("TONDO_CASES_COVERAGE")
         .map(|dir| Path::new(&dir).join(scratch.file_name().unwrap()).join(own(path)));
     if let Some(dir) = &coverage {
@@ -200,7 +210,9 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
     // Long enough for a debug build of `tondo` under an emulator, where a
     // case that uses much of the standard library takes minutes: a build
     // that hangs names its case.
+    let started = std::time::Instant::now();
     let build = run_with_timeout(&mut build, 1200, &[]).map_err(|e| format!("its build: {e}"))?;
+    let took = started.elapsed();
     let diagnostics = String::from_utf8_lossy(&build.stderr);
     let matches = |line: &str, severity: &str, expected: &str| {
         let (code, text) = expected.split_once(' ').unwrap_or((expected, ""));
@@ -239,6 +251,26 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
     }
     if expect.warnings.is_empty() && !diagnostics.is_empty() {
         return Err(format!("unexpected diagnostics:\n{diagnostics}"));
+    }
+    // The same build by the other compiler, timed the same way; one that
+    // cannot build the case, as one older than what it uses, compares
+    // nothing.
+    if let Some(against) = std::env::var_os("TONDO_CASES_BUILD_AGAINST").filter(|against| !against.is_empty()) {
+        let mut theirs = builds(Path::new(&against), &binary.with_extension("against"));
+        let started = std::time::Instant::now();
+        let built = run_with_timeout(&mut theirs, 1200, &[]).map_err(|e| format!("its build by {against:?}: {e}"))?;
+        if built.status.success() {
+            let their_took = started.elapsed();
+            // Its own build again, after theirs, so that neither counts
+            // what the first to run leaves warm for the second: the shorter
+            // of its two is its time.
+            let mut ours = builds(Path::new(compiler), &binary);
+            let started = std::time::Instant::now();
+            run_with_timeout(&mut ours, 1200, &[]).map_err(|e| format!("its build: {e}"))?;
+            if let Some(slower) = slower_build(took.min(started.elapsed()), their_took) {
+                return Err(format!("{slower}, by {}", against.to_string_lossy()));
+            }
+        }
     }
     // What a release build makes of it, once, in the modes that build one.
     let release = ["TONDO_CASES_DEBUG", "TONDO_CASES_REPLAY", "TONDO_CASES_LIVE"];
@@ -356,6 +388,28 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
 struct Stop {
     at: Duration,
     lasting: Duration,
+}
+
+/// Whether a build that took `ours` is too slow beside the same build by
+/// another compiler that took `theirs`: more than twice as long, and over a
+/// second, which no noise of a busy machine gives a build of a case.
+fn slower_build(ours: std::time::Duration, theirs: std::time::Duration) -> Option<String> {
+    let (ours, theirs) = (ours.as_secs_f64(), theirs.as_secs_f64());
+    (ours > 1.0 && ours > 2.0 * theirs)
+        .then(|| format!("its build took {ours:.2} s, {:.1} times the {theirs:.2} s of the build", ours / theirs))
+}
+
+#[test]
+fn a_build_is_slower_past_twice_the_other_and_a_second() {
+    use std::time::Duration;
+    let seconds = Duration::from_secs_f64;
+    assert_eq!(
+        slower_build(seconds(10.0), seconds(2.3)).as_deref(),
+        Some("its build took 10.00 s, 4.3 times the 2.30 s of the build")
+    );
+    // Twice as long, but under a second; under twice as long.
+    assert_eq!(slower_build(seconds(0.9), seconds(0.1)), None);
+    assert_eq!(slower_build(seconds(4.0), seconds(2.1)), None);
 }
 
 /// With `TONDO_CASES_STALLS`, the stops of a case's run: three in its first
@@ -723,6 +777,11 @@ fn projects() {
 fn run_all(mut paths: Vec<PathBuf>, name: &str, extra: &[String]) {
     paths.sort();
     assert!(!paths.is_empty(), "no {name} found");
+    assert!(
+        std::env::var_os("TONDO_CASES_BUILD_AGAINST").is_none_or(|against| against.is_empty())
+            || !cfg!(debug_assertions),
+        "TONDO_CASES_BUILD_AGAINST compares release compilers: run `cargo test --release`"
+    );
     if let Some(only) = std::env::var("TONDO_CASES_ONLY").ok().filter(|only| !only.is_empty()) {
         paths.retain(|path| path.to_string_lossy().contains(&only));
         if paths.is_empty() {
