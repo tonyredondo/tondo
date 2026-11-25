@@ -10116,3 +10116,68 @@ allocs); `texts/trim` drops from `13.45 ns` (`325 ins`) to `12.06–12.65 ns`
 0.1–0.2% instructions from unlocking regions in `http.Client.request`; and
 real example binaries grow by 0.00% to 0.97%. Closing the remaining gap on
 `texts/trim` against Go (`4.37 ns`, 0 B) still depends on zero-copy text views.
+
+## Frame-lent zero-copy string views without Go-style memory pinning
+
+Following the earlier `views-on-main` experiment (which added an 8-byte `data`
+pointer to every `Str` header, inflating `net/echo` by +25% bytes and
+regressing `texts/chars ascii` +22% and `chars other` +13.6%), zero-copy string
+views are now implemented as frame-lent `StrFrameView` slots marked in `cap`,
+keeping normal owned `Str` headers unchanged at 24 bytes and avoiding
+unbounded Go-style retention leaks by construction.
+
+Representation and runtime (`crates/tondo-runtime/src/strings.rs`):
+
+- Owned `Str` stays 24 bytes (`rc`, `len`, `cap` with bit 63 always `0`, UTF-8
+  bytes inline at offset `+24`).
+- A frame-lent view (`StrFrameView`, 32 bytes aligned to 8 bytes) uses an
+  untagged pointer with `rc = IMMORTAL`, `len` at `+8` (same offset as `Str`),
+  `cap = VIEW_CAP_BIT` (`1 << 63`) at `+16`, and `data: *const u8` at `+24`.
+- `long_bytes` tests `(*s).cap & VIEW_CAP_BIT != 0` inline with a cold branch
+  (no out-of-line call, preserving leaf functions such as `tondo_rt_str_hash`,
+  `tondo_rt_str_eq`, `tondo_rt_str_cmp`, and `tondo_rt_str_test`, and never
+  speculatively loading past 24-byte `EMPTY`). `tondo_rt_str_eq` checks
+  `(*a).len != (*b).len` before resolving bytes and combines `((*a).cap |
+  (*b).cap) & VIEW_CAP_BIT == 0` into one branch, as does `tondo_rt_str_cmp`.
+- `tondo_rt_str_retain` faults immediately if called on a view (`rc == IMMORTAL`
+  and `is_view(s)`), `tondo_rt_str_release` is a zero-cost no-op,
+  `tondo_rt_str_copy_out` checks `!is_view(s)` before treating `IMMORTAL` as a
+  static literal, and `scalar_offset`/`scalar_count` bypass the global
+  `POSITIONS` address cache for views because frame slots reuse stack
+  addresses across turns.
+
+Loop hoisting and zero-copy view pass (`hoist.rs`, `stack.rs`, `codegen`):
+
+- `StrOp::InPlace` now resolves a text once before a loop to its raw `*const u8`
+  bytes pointer (`text + 24` for owned `Str`, `*(text + 24)` for a view, or an
+  8-byte stack slot for a short text), so unchecked loop reads (`ByteWithin`,
+  `Decode`, `Next`, `byteWithin`, `scalarWithin`) index `[base + offset]` with
+  zero view checks inside loops. `hoist::reuse_in_place` reuses a dominating
+  `InPlace` across sequential loops on the same unchanged text (as in
+  `trimWhitespace`), and `codegen::in_place` propagates `InPlace` copies to a
+  fixed point across arbitrary loop nesting depths.
+- `stack::between_views` rewrites `textNative.betweenWithin(source, start, end)`
+  (used by `trim`, `trimStart`, `trimEnd`, `removePrefix`, `removeSuffix`, and
+  `splitOnce`) to `StrOp::BetweenView` (up to 16 32-byte frame slots per
+  function) only when forward view-flow and dual backward liveness (`slot_live`
+  and `data_live`) prove: (1) the view never escapes, is never retained, and is
+  only read by borrowing operations or `borrowing_strings` callees; (2) `source`
+  and all its transitive backing owners remain alive and unmutated while the
+  view's bytes may be read; and (3) the site is never re-entered while a
+  previous view from its slot is still live. Short sources slice inline in
+  registers; chained views flatten to depth 1. Any escaping or mutated-source
+  slice falls back to copying only its `len` bytes, so small substrings can
+  never pin large backing buffers.
+
+Measured on Linux x86-64 (Ryzen 9 5950X) against `f0b1ff98` (`b3-trial-inline-trim`)
+over all 75 rows of `bench/tondo` with `--regression-by instructions
+--max-regression 2`: 20/20 passed with zero regressions across all 75 rows;
+`texts/trim` drops from `12.10 ns` (`261 ins`, 1 region alloc / 80 B) to
+`7.60–8.03 ns` across 5 layouts (`156 ins`, −40.2% ins, −33.3% time, 0 B / 0
+allocs); `texts/trim read` improves further to `6.35–6.57 ns` (`135 ins`,
+−2.9% ins, −10.1% time, 0 B / 0 allocs); `texts/chars ascii` (`+0.0% ins`) and
+`texts/chars other` (`+0.0% ins`, −9.3% time across 5 layouts) have zero
+regression; `net/echo` adds 0 bytes; `queries/*` drop 1.6% to 8.5% instructions
+from the early length check in `tondo_rt_str_eq`; `trimming_nothing_allocates_nothing`
+drops `padded` from 300 allocations to 0; and example binaries move by `-0.06%`
+to `+0.10%`.

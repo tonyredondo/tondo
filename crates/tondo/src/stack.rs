@@ -28,6 +28,8 @@ use crate::types::{Ty, Types};
 
 /// The most texts one frame makes so.
 const FRAMED: usize = 16;
+/// The most zero-copy string views one frame keeps in stack slots (32 B each).
+const FRAMED_VIEWS: usize = 16;
 
 pub fn stack(bodies: &mut [Body], types: &Types) {
     bodies.iter_mut().for_each(made_in_place);
@@ -46,6 +48,7 @@ pub fn stack(bodies: &mut [Body], types: &Types) {
             }
         }
     }
+    between_views(bodies, types);
 }
 
 /// Whether a statement makes a text by interpolation, appending to no
@@ -529,12 +532,14 @@ fn borrowed_function(statement: &Statement, local: Local) -> bool {
 }
 
 /// Whether a call of the runtime only reads the texts it is given, while it
-/// runs: console output copies them, and a socket's write sends them before
-/// it returns.
+/// runs: console output copies them, `testing.keep` only observes the value,
+/// and a socket's write sends them before it returns.
 fn reads_only(callee: crate::hir::StdFn) -> bool {
     use crate::hir::StdFn;
     match callee {
-        StdFn::ConsolePrint | StdFn::ConsolePrintln | StdFn::ConsoleEprint | StdFn::ConsoleEprintln => true,
+        StdFn::ConsolePrint | StdFn::ConsolePrintln | StdFn::ConsoleEprint | StdFn::ConsoleEprintln | StdFn::Keep => {
+            true
+        }
         // A native whose code was read to keep none of the texts it is
         // given, that answers with a scalar, which holds none of them.
         StdFn::Native(index) => crate::hir::NATIVES.get(index as usize).is_some_and(|native| {
@@ -554,4 +559,867 @@ fn borrowed(operands: &[&Operand], read: &mut Vec<Local>) {
             operand => operand_uses(operand, read),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Frame-lent zero-copy string views (`StrOp::BetweenView`)
+// ---------------------------------------------------------------------------
+
+/// A compact set of locals (one bit per local) used for liveness and view flow.
+#[derive(Clone, PartialEq, Eq)]
+struct BitSet(Vec<u64>);
+
+impl BitSet {
+    fn empty(count: usize) -> BitSet {
+        BitSet(vec![0; count.div_ceil(64)])
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.iter().all(|&w| w == 0)
+    }
+
+    fn has(&self, local: Local) -> bool {
+        let i = local.0 as usize;
+        (self.0[i / 64] >> (i % 64)) & 1 != 0
+    }
+
+    fn add(&mut self, local: Local) {
+        let i = local.0 as usize;
+        self.0[i / 64] |= 1 << (i % 64);
+    }
+
+    fn remove(&mut self, local: Local) {
+        let i = local.0 as usize;
+        self.0[i / 64] &= !(1 << (i % 64));
+    }
+
+    fn join(&mut self, other: &BitSet) -> bool {
+        let mut changed = false;
+        for (a, &b) in self.0.iter_mut().zip(&other.0) {
+            let next = *a | b;
+            if next != *a {
+                *a = next;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn meet(&mut self, other: &BitSet) {
+        for (a, &b) in self.0.iter_mut().zip(&other.0) {
+            *a &= b;
+        }
+    }
+
+    fn intersects(&self, other: &BitSet) -> bool {
+        self.0.iter().zip(&other.0).any(|(&a, &b)| (a & b) != 0)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = Local> + '_ {
+        self.0.iter().enumerate().flat_map(|(wi, &word)| {
+            let mut bits = word;
+            std::iter::from_fn(move || {
+                if bits == 0 {
+                    return None;
+                }
+                let tz = bits.trailing_zeros();
+                bits &= bits - 1;
+                Some(Local((wi * 64) as u32 + tz))
+            })
+        })
+    }
+}
+
+/// Whether `rvalue` is a `textNative.betweenWithin(source, start, end)` call,
+/// returning its `source` operand.
+fn between_within_source(rvalue: &Rvalue) -> Option<&Operand> {
+    let Rvalue::Call(crate::hir::Callee::Std(crate::hir::StdFn::Native(index)), args) = rvalue else {
+        return None;
+    };
+    if crate::hir::NATIVES.get(*index as usize).is_some_and(|n| n.name == "betweenWithin") && args.len() == 3 {
+        Some(&args[0])
+    } else {
+        None
+    }
+}
+
+/// Whether a `StdFn` call only borrows any `String` arguments during the call
+/// without retaining or returning pointers into them.
+fn view_reads_only(callee: crate::hir::StdFn) -> bool {
+    if reads_only(callee) {
+        return true;
+    }
+    let crate::hir::StdFn::Native(index) = callee else { return false };
+    crate::hir::NATIVES.get(index as usize).is_some_and(|native| {
+        matches!(
+            native.symbol,
+            "tondo_rt_text_between"
+                | "tondo_rt_text_trim"
+                | "tondo_rt_text_split"
+                | "tondo_rt_text_lines"
+                | "tondo_rt_text_words"
+                | "tondo_rt_text_repeat"
+        )
+    })
+}
+
+/// Reachable blocks from entry `0` in reverse postorder, plus a reachability
+/// bitmap.
+fn reachable_rpo(body: &Body) -> (Vec<usize>, Vec<bool>) {
+    let n = body.blocks.len();
+    let mut visited = vec![false; n];
+    let mut post = Vec::with_capacity(n);
+    if n == 0 {
+        return (post, visited);
+    }
+    let mut stack: Vec<(usize, usize)> = vec![(0, 0)];
+    visited[0] = true;
+    while let Some(&mut (block, ref mut next)) = stack.last_mut() {
+        let succs = crate::hoist::targets(&body.blocks[block].terminator);
+        if let Some(&to) = succs.get(*next) {
+            *next += 1;
+            if !visited[to] {
+                visited[to] = true;
+                stack.push((to, 0));
+            }
+        } else {
+            post.push(block);
+            stack.pop();
+        }
+    }
+    post.reverse();
+    (post, visited)
+}
+
+/// Locals whose address may be aliased (`var` loan parameters and `Lend`/
+/// `LendAt` targets or aliases).
+fn addressed_locals(body: &Body, reachable: &[bool]) -> Vec<bool> {
+    let mut addressed = vec![false; body.locals.len()];
+    for (&param, &loan) in body.params.iter().zip(&body.loans) {
+        addressed[param.0 as usize] |= loan;
+    }
+    for (b, data) in body.blocks.iter().enumerate() {
+        if !reachable[b] {
+            continue;
+        }
+        for stmt in &data.stmts {
+            match stmt {
+                Statement::Lend(alias, place) => {
+                    addressed[alias.0 as usize] = true;
+                    addressed[place.local.0 as usize] = true;
+                }
+                Statement::LendAt(alias, _) => addressed[alias.0 as usize] = true,
+                _ => {}
+            }
+        }
+    }
+    addressed
+}
+
+/// Checks whether `stmt` is safe for any locals currently in `held` (holding a
+/// borrowed `StrFrameView` or borrowed `String` parameter), returning the
+/// destination local if `stmt` propagates a view via a whole-local copy, or
+/// `Err(())` if `stmt` could retain, escape, or unsafely use a local in `held`.
+fn check_view_statement(
+    body: &Body,
+    types: &Types,
+    stmt: &Statement,
+    held: &BitSet,
+    addressed: &[bool],
+    str_borrows: &[Vec<bool>],
+) -> Result<Option<Local>, ()> {
+    match stmt {
+        Statement::Release(place) | Statement::Moved(place) if place.path.is_empty() => Ok(None),
+        Statement::Clear(_) | Statement::DeferPop | Statement::OsrLoad(_) => Ok(None),
+        Statement::Assign(place, rvalue, _) => {
+            if !place.path.is_empty() {
+                if held.has(place.local) {
+                    return Err(());
+                }
+                for proj in &place.path {
+                    if let Proj::Index(i, _) | Proj::InBounds(i) = proj
+                        && held.has(*i)
+                    {
+                        return Err(());
+                    }
+                }
+            }
+            let mut rused = Vec::new();
+            rvalue_uses(rvalue, &mut rused);
+            if !rused.iter().any(|&l| held.has(l)) {
+                return Ok(None);
+            }
+            // Reject any projection read of a local in `held`.
+            let whole_only = |ops: &[&Operand]| -> bool {
+                ops.iter().all(|op| match op {
+                    Operand::Copy(p) if held.has(p.local) => p.path.is_empty(),
+                    Operand::Copy(p) => {
+                        !p.path.iter().any(|proj| matches!(proj, Proj::Index(i, _) | Proj::InBounds(i) if held.has(*i)))
+                    }
+                    Operand::Const(_) => true,
+                })
+            };
+            match &**rvalue {
+                Rvalue::Use(Operand::Copy(from))
+                    if place.path.is_empty() && from.path.is_empty() && held.has(from.local) =>
+                {
+                    if addressed[place.local.0 as usize] || body.ret == Some(place.local) {
+                        return Err(());
+                    }
+                    Ok(Some(place.local))
+                }
+                Rvalue::Length(op) if whole_only(&[op]) => Ok(None),
+                Rvalue::StrOp(
+                    StrOp::At
+                    | StrOp::Get
+                    | StrOp::ByteLength
+                    | StrOp::ByteAt
+                    | StrOp::ByteWithin
+                    | StrOp::Contains
+                    | StrOp::StartsWith
+                    | StrOp::EndsWith
+                    | StrOp::Find
+                    | StrOp::Decode
+                    | StrOp::Next
+                    | StrOp::Replace
+                    | StrOp::LowerAscii
+                    | StrOp::UpperAscii
+                    | StrOp::SliceChecked
+                    | StrOp::Bytes
+                    | StrOp::CopyOut
+                    | StrOp::BetweenView,
+                    operands,
+                    _,
+                ) if whole_only(&operands.iter().collect::<Vec<_>>()) => Ok(None),
+                Rvalue::Slice(op, ..) if types.repr(body.place_ty(types, place)) == Ty::STRING && whole_only(&[op]) => {
+                    Ok(None)
+                }
+                Rvalue::Binary(BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, a, b)
+                    if whole_only(&[a, b]) =>
+                {
+                    Ok(None)
+                }
+                Rvalue::Concat(pieces) if pieces.len() > 1 => {
+                    for piece in pieces {
+                        match piece {
+                            Piece::Taken(p) if held.has(p.local) => return Err(()),
+                            Piece::Value(Operand::Copy(p), ty) if held.has(p.local) => {
+                                if !p.path.is_empty() || types.repr(*ty) != Ty::STRING {
+                                    return Err(());
+                                }
+                            }
+                            Piece::Value(Operand::Copy(p), _)
+                                if p.path.iter().any(
+                                    |proj| matches!(proj, Proj::Index(i, _) | Proj::InBounds(i) if held.has(*i)),
+                                ) =>
+                            {
+                                return Err(());
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(None)
+                }
+                Rvalue::MapOp(
+                    crate::hir::MapOp::Contains | crate::hir::MapOp::Get | crate::hir::MapOp::Position,
+                    operands,
+                    _,
+                ) if operands.len() == 2 => {
+                    let mut map_used = Vec::new();
+                    operand_uses(&operands[0], &mut map_used);
+                    if map_used.iter().any(|&l| held.has(l)) || !whole_only(&[&operands[1]]) {
+                        return Err(());
+                    }
+                    Ok(None)
+                }
+                Rvalue::Call(crate::hir::Callee::Std(callee), operands)
+                    if view_reads_only(*callee) && whole_only(&operands.iter().collect::<Vec<_>>()) =>
+                {
+                    Ok(None)
+                }
+                Rvalue::Call(crate::hir::Callee::Fn(callee), operands) => {
+                    let params = str_borrows.get(callee.0 as usize);
+                    for (at, op) in operands.iter().enumerate() {
+                        let mut op_used = Vec::new();
+                        operand_uses(op, &mut op_used);
+                        if !op_used.iter().any(|&l| held.has(l)) {
+                            continue;
+                        }
+                        let whole = matches!(op, Operand::Copy(p) if p.path.is_empty() && held.has(p.local));
+                        if !whole || !params.and_then(|p| p.get(at)).copied().unwrap_or(false) {
+                            return Err(());
+                        }
+                    }
+                    Ok(None)
+                }
+                _ => Err(()),
+            }
+        }
+        _ => {
+            let (mut used, mut defined) = (Vec::new(), Vec::new());
+            statement_locals(stmt, &mut used, &mut defined);
+            if used.iter().chain(&defined).any(|&l| held.has(l)) { Err(()) } else { Ok(None) }
+        }
+    }
+}
+
+/// For each function, which of its non-loan, non-`takes` `String` parameters
+/// it only borrows (never retains, stores, or returns), so callers may pass a
+/// `StrFrameView` to them safely.
+fn borrowing_strings(bodies: &[Body], types: &Types) -> Vec<Vec<bool>> {
+    let mut borrows: Vec<Vec<bool>> = bodies
+        .iter()
+        .map(|body| {
+            body.params
+                .iter()
+                .enumerate()
+                .map(|(at, &param)| {
+                    body.osr.is_none()
+                        && types.repr(body.locals[param.0 as usize]) == Ty::STRING
+                        && !body.loans.get(at).copied().unwrap_or(false)
+                        && !body.takes.get(at).copied().unwrap_or(false)
+                })
+                .collect()
+        })
+        .collect();
+    let reachable: Vec<Vec<bool>> = bodies.iter().map(|body| reachable_rpo(body).1).collect();
+    let addressed: Vec<Vec<bool>> =
+        bodies.iter().zip(&reachable).map(|(body, reach)| addressed_locals(body, reach)).collect();
+    loop {
+        let mut changed = false;
+        for (index, body) in bodies.iter().enumerate() {
+            for (at, &param) in body.params.iter().enumerate() {
+                if borrows[index][at]
+                    && !only_borrowed_string(body, param, types, &reachable[index], &addressed[index], &borrows)
+                {
+                    borrows[index][at] = false;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return borrows;
+        }
+    }
+}
+
+/// Whether `body` only borrows `param` (a `String` parameter), tracking whole-
+/// local copies through reachable blocks.
+fn only_borrowed_string(
+    body: &Body,
+    param: Local,
+    types: &Types,
+    reachable: &[bool],
+    addressed: &[bool],
+    str_borrows: &[Vec<bool>],
+) -> bool {
+    if addressed[param.0 as usize] || body.ret == Some(param) {
+        return false;
+    }
+    let count = body.locals.len();
+    let mut held = BitSet::empty(count);
+    held.add(param);
+    // Monotone flow-insensitive closure of locals that may receive `param` via
+    // whole-local copies.
+    loop {
+        let mut grew = false;
+        for (b, data) in body.blocks.iter().enumerate() {
+            if !reachable[b] {
+                continue;
+            }
+            for stmt in &data.stmts {
+                match check_view_statement(body, types, stmt, &held, addressed, str_borrows) {
+                    Ok(Some(to)) if !held.has(to) => {
+                        held.add(to);
+                        grew = true;
+                    }
+                    Ok(_) => {}
+                    Err(()) => return false,
+                }
+            }
+            let mut term_used = Vec::new();
+            terminator_uses(&data.terminator, &mut term_used);
+            if term_used.iter().any(|&l| held.has(l)) {
+                return false;
+            }
+        }
+        if !grew {
+            return true;
+        }
+    }
+}
+
+/// Backward liveness step for one statement (updates `live` from after `stmt`
+/// to before `stmt`). When `release_reads` is `None`, every `Release` counts
+/// as a use (slot liveness: the stack header must remain intact until
+/// released). When `release_reads` is `Some(named)`, only releases of named
+/// locals count as uses (data liveness: unnamed temporaries' backing bytes are
+/// never dereferenced by `tondo_rt_str_release`, and dumps never inspect them).
+fn liveness_step(stmt: &Statement, live: &mut BitSet, release_reads: Option<&[bool]>) {
+    match stmt {
+        Statement::Assign(place, rvalue, _) => {
+            if place.path.is_empty() {
+                live.remove(place.local);
+            }
+            if let Rvalue::Select(cases, ..) = &**rvalue {
+                for case in cases {
+                    live.remove(case.out);
+                }
+            }
+            if !place.path.is_empty() {
+                live.add(place.local);
+                for proj in &place.path {
+                    if let Proj::Index(i, _) | Proj::InBounds(i) = proj {
+                        live.add(*i);
+                    }
+                }
+            }
+            let mut used = Vec::new();
+            rvalue_uses(rvalue, &mut used);
+            if let Rvalue::Select(cases, ..) = &**rvalue {
+                used.retain(|l| !cases.iter().any(|c| c.out == *l));
+            }
+            for local in used {
+                live.add(local);
+            }
+        }
+        Statement::Clear(local) => live.remove(*local),
+        Statement::Moved(place) => {
+            if place.path.is_empty() {
+                live.remove(place.local);
+            } else {
+                live.add(place.local);
+                for proj in &place.path {
+                    if let Proj::Index(i, _) | Proj::InBounds(i) = proj {
+                        live.add(*i);
+                    }
+                }
+            }
+        }
+        Statement::Release(place) => {
+            if place.path.is_empty() {
+                live.remove(place.local);
+                if release_reads.is_none_or(|named| named[place.local.0 as usize]) {
+                    live.add(place.local);
+                }
+            } else {
+                live.add(place.local);
+                for proj in &place.path {
+                    if let Proj::Index(i, _) | Proj::InBounds(i) = proj {
+                        live.add(*i);
+                    }
+                }
+            }
+        }
+        Statement::Retain(place) | Statement::DeferPush(_, place) => {
+            live.add(place.local);
+            for proj in &place.path {
+                if let Proj::Index(i, _) | Proj::InBounds(i) = proj {
+                    live.add(*i);
+                }
+            }
+        }
+        Statement::Lend(alias, place) => {
+            live.remove(*alias);
+            live.add(place.local);
+            for proj in &place.path {
+                if let Proj::Index(i, _) | Proj::InBounds(i) = proj {
+                    live.add(*i);
+                }
+            }
+        }
+        Statement::LendAt(alias, operand) => {
+            live.remove(*alias);
+            let mut used = Vec::new();
+            operand_uses(operand, &mut used);
+            for local in used {
+                live.add(local);
+            }
+        }
+        Statement::Failing(operand, ..) => {
+            let mut used = Vec::new();
+            operand_uses(operand, &mut used);
+            for local in used {
+                live.add(local);
+            }
+        }
+        Statement::DeferPop | Statement::OsrLoad(_) => {}
+    }
+}
+
+/// Computes backward liveness (`live_out` per block) over reachable blocks.
+fn compute_liveness(body: &Body, reachable: &[bool], release_reads: Option<&[bool]>) -> (Vec<BitSet>, Vec<BitSet>) {
+    let n = body.blocks.len();
+    let count = body.locals.len();
+    let mut live_in = vec![BitSet::empty(count); n];
+    let mut live_out = vec![BitSet::empty(count); n];
+    loop {
+        let mut changed = false;
+        for b in (0..n).rev() {
+            if !reachable[b] {
+                continue;
+            }
+            let mut out = BitSet::empty(count);
+            for to in crate::hoist::targets(&body.blocks[b].terminator) {
+                out.join(&live_in[to]);
+            }
+            let mut term_used = Vec::new();
+            terminator_uses(&body.blocks[b].terminator, &mut term_used);
+            for local in term_used {
+                out.add(local);
+            }
+            live_out[b] = out.clone();
+            let mut cur = out;
+            for stmt in body.blocks[b].stmts.iter().rev() {
+                liveness_step(stmt, &mut cur, release_reads);
+            }
+            if cur != live_in[b] {
+                live_in[b] = cur;
+                changed = true;
+            }
+        }
+        if !changed {
+            return (live_in, live_out);
+        }
+    }
+}
+
+/// Whether `stmt` may free, overwrite, move, or mutate any local in `owners`.
+fn invalidates_owner(
+    body: &Body,
+    types: &Types,
+    stmt: &Statement,
+    owners: &BitSet,
+    fn_loans: &[Vec<bool>],
+    fn_takes: &[Vec<bool>],
+) -> bool {
+    if owners.is_empty() {
+        return false;
+    }
+    let is_string = |l: Local| types.repr(body.locals[l.0 as usize]) == Ty::STRING;
+    match stmt {
+        Statement::Assign(place, rvalue, _) => {
+            if owners.has(place.local) {
+                return true;
+            }
+            match &**rvalue {
+                Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) => owners.has(target.local),
+                Rvalue::Concat(pieces) => pieces.iter().any(|p| matches!(p, Piece::Taken(at) if owners.has(at.local))),
+                Rvalue::StrOp(StrOp::CopyOut, args, _) => {
+                    let mut used = Vec::new();
+                    args.iter().for_each(|a| operand_uses(a, &mut used));
+                    used.iter().any(|&l| owners.has(l))
+                }
+                Rvalue::Call(crate::hir::Callee::Fn(callee), args) => args.iter().enumerate().any(|(at, arg)| {
+                    let takes = fn_takes.get(callee.0 as usize).and_then(|t| t.get(at)).copied().unwrap_or(false);
+                    let loans = fn_loans.get(callee.0 as usize).and_then(|l| l.get(at)).copied().unwrap_or(false);
+                    if !(takes || loans) {
+                        return false;
+                    }
+                    let mut used = Vec::new();
+                    operand_uses(arg, &mut used);
+                    used.iter().any(|&l| owners.has(l))
+                }),
+                Rvalue::Call(crate::hir::Callee::Std(callee), args) => {
+                    if reads_only(*callee) {
+                        return false;
+                    }
+                    let mut used = Vec::new();
+                    args.iter().for_each(|a| operand_uses(a, &mut used));
+                    used.iter().any(|&l| owners.has(l) && !is_string(l))
+                }
+                Rvalue::Call(_, args) | Rvalue::CallIndirect(_, args) => {
+                    let mut used = Vec::new();
+                    args.iter().for_each(|a| operand_uses(a, &mut used));
+                    used.iter().any(|&l| owners.has(l) && !is_string(l))
+                }
+                Rvalue::Spawn(..) | Rvalue::TaskOp(..) => {
+                    let mut used = Vec::new();
+                    rvalue_uses(rvalue, &mut used);
+                    used.iter().any(|&l| owners.has(l))
+                }
+                _ => false,
+            }
+        }
+        Statement::Release(place) | Statement::Moved(place) | Statement::Lend(_, place) => owners.has(place.local),
+        Statement::Clear(local) => owners.has(*local),
+        Statement::OsrLoad(_) => true,
+        Statement::Retain(_)
+        | Statement::LendAt(..)
+        | Statement::DeferPush(..)
+        | Statement::DeferPop
+        | Statement::Failing(..) => false,
+    }
+}
+
+/// Converts non-escaping `textNative.betweenWithin(source, start, end)` calls
+/// into zero-copy frame-lent `StrOp::BetweenView` when static analysis proves
+/// the view never escapes, `source` (and its backing owners) stays alive and
+/// unmutated for the view's entire live range, and the site's 32-byte slot is
+/// never overwritten while a previous view from it is still live.
+fn between_views(bodies: &mut [Body], types: &Types) {
+    let fn_loans: Vec<Vec<bool>> = bodies.iter().map(|b| b.loans.clone()).collect();
+    let fn_takes: Vec<Vec<bool>> = bodies.iter().map(|b| b.takes.clone()).collect();
+    let str_borrows = borrowing_strings(bodies, types);
+    for (index, body) in bodies.iter_mut().enumerate() {
+        between_views_in(body, index, types, &fn_loans, &fn_takes, &str_borrows);
+    }
+}
+
+fn between_views_in(
+    body: &mut Body,
+    index: usize,
+    types: &Types,
+    fn_loans: &[Vec<bool>],
+    fn_takes: &[Vec<bool>],
+    str_borrows: &[Vec<bool>],
+) {
+    if body.osr.is_some() || body.blocks.is_empty() {
+        return;
+    }
+    let (rpo, reachable) = reachable_rpo(body);
+    let mut candidates = Vec::new();
+    for &b in &rpo {
+        for (at, stmt) in body.blocks[b].stmts.iter().enumerate() {
+            if let Statement::Assign(place, rvalue, _) = stmt {
+                if let Rvalue::Call(crate::hir::Callee::Fn(callee), _) = &**rvalue
+                    && callee.0 as usize == index
+                {
+                    return;
+                }
+                if place.path.is_empty() && between_within_source(rvalue).is_some() {
+                    candidates.push((b, at));
+                }
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return;
+    }
+
+    let count = body.locals.len();
+    let addressed = addressed_locals(body, &reachable);
+    // Backing-owner edges: `dep[dst]` lists locals whose buffer `dst` borrows
+    // without owning its own reference count (or from a framed `Concat`).
+    let mut dep: Vec<Vec<Local>> = vec![Vec::new(); count];
+    for &b in &rpo {
+        let stmts = &body.blocks[b].stmts;
+        for (at, stmt) in stmts.iter().enumerate() {
+            let Statement::Assign(place, rvalue, _) = stmt else { continue };
+            if !place.path.is_empty() {
+                continue;
+            }
+            if let Rvalue::Use(Operand::Copy(src)) = &**rvalue {
+                let retained = matches!(
+                    stmts.get(at + 1),
+                    Some(Statement::Retain(p)) if p.path.is_empty() && p.local == place.local
+                ) && !body.framed.contains(&src.local);
+                if !retained {
+                    dep[place.local.0 as usize].push(src.local);
+                }
+            }
+        }
+    }
+
+    let mut named = vec![false; count];
+    for (i, name) in body.names.iter().enumerate() {
+        named[i] |= name.is_some();
+    }
+    for &(local, ..) in &body.scoped {
+        named[local.0 as usize] = true;
+    }
+
+    let (_, slot_live_out) = compute_liveness(body, &reachable, None);
+    let (_, data_live_out) = compute_liveness(body, &reachable, Some(&named));
+    // Precompute `live_after[b][at]` (slot liveness) and `data_live_before[b][at]`
+    // (content liveness) once for the function.
+    let mut live_after: Vec<Vec<BitSet>> = vec![Vec::new(); body.blocks.len()];
+    let mut data_live_before: Vec<Vec<BitSet>> = vec![Vec::new(); body.blocks.len()];
+    for &b in &rpo {
+        let len = body.blocks[b].stmts.len();
+        let mut after = vec![BitSet::empty(count); len];
+        let mut cur = slot_live_out[b].clone();
+        for at in (0..len).rev() {
+            after[at] = cur.clone();
+            liveness_step(&body.blocks[b].stmts[at], &mut cur, None);
+        }
+        live_after[b] = after;
+
+        let mut before = vec![BitSet::empty(count); len];
+        let mut dcur = data_live_out[b].clone();
+        for at in (0..len).rev() {
+            liveness_step(&body.blocks[b].stmts[at], &mut dcur, Some(&named));
+            before[at] = dcur.clone();
+        }
+        data_live_before[b] = before;
+    }
+
+    let mut converted = 0usize;
+    for (def_block, def_stmt) in candidates {
+        if converted == FRAMED_VIEWS {
+            break;
+        }
+        let Statement::Assign(place, rvalue, span) = &body.blocks[def_block].stmts[def_stmt] else {
+            continue;
+        };
+        let (dst0, span) = (place.local, *span);
+        if addressed[dst0.0 as usize] || body.ret == Some(dst0) {
+            continue;
+        }
+        let Some(src_op) = between_within_source(rvalue).cloned() else { continue };
+
+        // Compute transitive backing owners of `src_op`.
+        let mut owners = BitSet::empty(count);
+        let src_local = match &src_op {
+            Operand::Const(Const::Str(_)) => None,
+            Operand::Copy(p) if p.path.is_empty() => {
+                let mut stack = vec![p.local];
+                owners.add(p.local);
+                while let Some(cur) = stack.pop() {
+                    for &parent in &dep[cur.0 as usize] {
+                        if !owners.has(parent) {
+                            owners.add(parent);
+                            stack.push(parent);
+                        }
+                    }
+                }
+                Some(p.local)
+            }
+            _ => continue,
+        };
+        if owners.iter().any(|o| addressed[o.0 as usize]) {
+            continue;
+        }
+
+        if !can_be_between_view(
+            body,
+            types,
+            def_block,
+            def_stmt,
+            dst0,
+            &owners,
+            &addressed,
+            &live_after,
+            &data_live_before,
+            fn_loans,
+            fn_takes,
+            str_borrows,
+        ) {
+            continue;
+        }
+
+        let Statement::Assign(_, rvalue, _) = &mut body.blocks[def_block].stmts[def_stmt] else { unreachable!() };
+        let Rvalue::Call(_, args) = &mut **rvalue else { unreachable!() };
+        let args = std::mem::take(args);
+        **rvalue = Rvalue::StrOp(StrOp::BetweenView, args, span);
+        if let Some(src) = src_local {
+            dep[dst0.0 as usize].push(src);
+        }
+        converted += 1;
+
+        let scope = body.scopes.get(def_block).copied().flatten();
+        crate::mir_text::note(body, "stack", || {
+            format!("b{def_block}[{def_stmt}]: l{} is a view in the frame, without copying", dst0.0)
+        });
+        crate::mir_text::remark_by(body, span, "frame", None, true, scope, || {
+            "is a view in the frame, without copying".to_string()
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn can_be_between_view(
+    body: &Body,
+    types: &Types,
+    def_block: usize,
+    def_stmt: usize,
+    dst0: Local,
+    owners: &BitSet,
+    addressed: &[bool],
+    live_after: &[Vec<BitSet>],
+    data_live_before: &[Vec<BitSet>],
+    fn_loans: &[Vec<bool>],
+    fn_takes: &[Vec<bool>],
+    str_borrows: &[Vec<bool>],
+) -> bool {
+    let count = body.locals.len();
+    let mut view_in = vec![BitSet::empty(count); body.blocks.len()];
+    let mut worklist: Vec<usize> = Vec::new();
+
+    let step = |b: usize, at: usize, held: &mut BitSet| -> bool {
+        let stmt = &body.blocks[b].stmts[at];
+        if held.intersects(&data_live_before[b][at]) && invalidates_owner(body, types, stmt, owners, fn_loans, fn_takes)
+        {
+            return false;
+        }
+        let Ok(copied) = check_view_statement(body, types, stmt, held, addressed, str_borrows) else {
+            return false;
+        };
+        if let Some(to) = copied {
+            held.add(to);
+        } else if let Statement::Assign(place, ..) = stmt
+            && place.path.is_empty()
+        {
+            held.remove(place.local);
+        }
+        held.meet(&live_after[b][at]);
+        true
+    };
+
+    let finish_block = |b: usize, held: &BitSet, view_in: &mut [BitSet], worklist: &mut Vec<usize>| -> bool {
+        if held.is_empty() {
+            return true;
+        }
+        let mut term_used = Vec::new();
+        terminator_uses(&body.blocks[b].terminator, &mut term_used);
+        if term_used.iter().any(|&l| held.has(l)) {
+            return false;
+        }
+        for to in crate::hoist::targets(&body.blocks[b].terminator) {
+            if view_in[to].join(held) {
+                worklist.push(to);
+            }
+        }
+        true
+    };
+
+    // Seed right after `(def_block, def_stmt)`.
+    let mut held = BitSet::empty(count);
+    held.add(dst0);
+    held.meet(&live_after[def_block][def_stmt]);
+    for at in (def_stmt + 1)..body.blocks[def_block].stmts.len() {
+        if held.is_empty() {
+            break;
+        }
+        if !step(def_block, at, &mut held) {
+            return false;
+        }
+    }
+    if !finish_block(def_block, &held, &mut view_in, &mut worklist) {
+        return false;
+    }
+
+    while let Some(b) = worklist.pop() {
+        let mut held = view_in[b].clone();
+        let mut stopped_at_def = false;
+        for at in 0..body.blocks[b].stmts.len() {
+            if b == def_block && at == def_stmt {
+                if !held.is_empty() {
+                    return false;
+                }
+                stopped_at_def = true;
+                break;
+            }
+            if held.is_empty() {
+                break;
+            }
+            if !step(b, at, &mut held) {
+                return false;
+            }
+        }
+        if !stopped_at_def && !finish_block(b, &held, &mut view_in, &mut worklist) {
+            return false;
+        }
+    }
+    true
 }

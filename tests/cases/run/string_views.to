@@ -1,0 +1,231 @@
+// Zero-copy frame-lent string views (`StrFrameView` / `StrOp::BetweenView`):
+// verifies ASCII/Unicode trimming, prefix/suffix removal, `splitOnce`,
+// chained views, short-text slicing, `StrOp::InPlace` loops over views,
+// long Unicode views reusing the same stack slot without stale `POSITIONS`
+// entries, map lookups, borrowing calls, and adversarial mutation/escape
+// cases that must fall back to copying.
+
+import std.console
+
+type Held = {
+    value: String
+}
+
+fn extractTrimmed(s: String): String {
+    s.trim()
+}
+
+fn borrowInspect(s: String): Int {
+    // Kept past the inliner's threshold so callers pass a frame view across
+    // a real call boundary (`borrowing_strings`).
+    var acc = s.byteLength() * 3 + s.length()
+    if s.startsWith("alpha") {
+        acc += 100
+    }
+    if s.endsWith("gamma") {
+        acc += 200
+    }
+    if s.contains("beta") {
+        acc += 300
+    }
+    var i = 0
+    for c in s {
+        if i < 4 {
+            acc += c.code() % 7
+        }
+        i += 1
+    }
+    acc
+}
+
+fn sumTrimViewLengths(items: Array[String]): Int {
+    var total = 0
+    for s in items {
+        let t = s.trim()
+        total += t.length()
+    }
+    total
+}
+
+fn testBasicAndChained(): String {
+    let raw = "   prefix:hello world!   "
+    let t1 = raw.trim()
+    let t2 = t1.removePrefix("prefix:")
+    let t3 = t2.removeSuffix("!")
+    assert(t3 == "hello world")
+    assert(t3.byteLength() == 11)
+    assert(t3.length() == 11)
+
+    let pair = "  alpha = beta = gamma  ".splitOnce("=")
+    match pair {
+        some((before, after)) => {
+            assert(before.trim() == "alpha")
+            assert(after.trim() == "beta = gamma")
+        }
+        none => panic("expected splitOnce match")
+    }
+
+    // Short texts (<= 7 bytes) and empty slices of long strings.
+    assert(" a ".trim() == "a")
+    assert("  xyz  ".trim() == "xyz")
+    assert("ab".removePrefix("ab") == "")
+    assert("ab".removeSuffix("ab") == "")
+    let longEmpty = "abcdefghij".removePrefix("abcdefghij")
+    assert(longEmpty == "")
+    assert(longEmpty.byteLength() == 0)
+    assert(longEmpty.length() == 0)
+    let longEmpty2 = "abcdefghij".removeSuffix("abcdefghij")
+    assert(longEmpty2 == "")
+    assert(longEmpty2.byteLength() == 0)
+
+    "basic-ok"
+}
+
+fn testLoopsAndUnicodeSlotReuse(): String {
+    // Iterating chars and bytes over a frame view (`StrOp::InPlace` on View).
+    let samples = ["   hello world   ", "   café naïve   ", "   a😀b   "]
+    var charCount = 0
+    var byteSum = 0
+    for s in samples {
+        let v = s.trim()
+        for _ in v {
+            charCount += 1
+        }
+        for i in 0..v.byteLength() {
+            byteSum += Int(v.byteAt(i))
+        }
+    }
+    assert(charCount == 11 + 10 + 3)
+    assert(byteSum > 0)
+
+    // Long Unicode views (>= 64 bytes) reusing the exact same stack slot across
+    // iterations must not hit stale `POSITIONS` cache entries.
+    let u1 = "   {"a".repeat(40)}é{"ñ".repeat(25)}   "
+    let u2 = "   {"b".repeat(30)}😀{"日".repeat(20)}   "
+    let pair = [u1, u2, u1, u2]
+    var idx = 0
+    for s in pair {
+        let v = s.trim()
+        if idx % 2 == 0 {
+            assert(v.length() == 66)
+            assert(v[40] == 'é')
+            assert(v[41] == 'ñ')
+            assert(v[65] == 'ñ')
+        } else {
+            assert(v.length() == 51)
+            assert(v[30] == '😀')
+            assert(v[31] == '日')
+            assert(v[50] == '日')
+        }
+        idx += 1
+    }
+    "loops-ok"
+}
+
+fn testMapAndBorrowingCall(): String {
+    let scores = ["alpha_long_key": 10, "beta_long_key": 20, "gamma_long_key": 30]
+    let lines = ["   alpha_long_key   ", "   beta_long_key   ", "   missing_key   ", "   gamma_long_key   "]
+    var sum = 0
+    var inspected = 0
+    for line in lines {
+        let k = line.trim()
+        if k in scores {
+            match scores.get(k) {
+                some(v) => sum += v
+                none => {}
+            }
+        }
+        inspected += borrowInspect(k)
+    }
+    assert(sum == 60)
+    assert(inspected > 0)
+    "map-ok"
+}
+
+fn testMixedBranches(): Int {
+    let inputs = [
+        " both ends padded ",
+        " start only padded",
+        "end only padded ",
+        "neither_padded_long",
+        "  \u{3000}unicode_long_text\u{00A0}  ",
+    ]
+    var total = 0
+    for text in inputs {
+        total += text.trim().length() + text.trimStart().length() + text.trimEnd().length()
+    }
+    total
+}
+
+fn testAdversarialSafety(): String {
+    // 1. Source mutated while trimmed result is still live: must copy!
+    var s = "   the quick brown fox   "
+    let t = s.trim()
+    s = "{s} mutated far past its original capacity!"
+    assert(t == "the quick brown fox")
+
+    // 2. Self-reassignment: must copy before releasing old `selfRe`!
+    var selfRe = "   the quick brown fox   "
+    selfRe = selfRe.trim()
+    assert(selfRe == "the quick brown fox")
+
+    // 3. Parent array mutated while trimmed element is still live: must copy!
+    var arr = ["   the quick brown fox   "]
+    let fromArr = arr[0].trim()
+    arr.push("another long string to force array reallocation")
+    arr[0] = "completely overwritten element"
+    assert(fromArr == "the quick brown fox")
+
+    // 4. Value surviving across loop iterations: must copy, never reuse slot!
+    let lines = ["   first long line   ", "   second long line   ", "   third long line   "]
+    var prev = ""
+    var joined = ""
+    for line in lines {
+        let cur = line.trim()
+        if not prev.isEmpty() {
+            joined = "{joined}|{prev}->{cur}"
+        }
+        prev = cur
+    }
+    assert(joined == "|first long line->second long line|second long line->third long line")
+    assert(prev == "third long line")
+
+    // 5. Escaping to return, Array, Map, record, closure, and spawned task.
+    let returned = extractTrimmed("   returned long string   ")
+    assert(returned == "returned long string")
+
+    var kept: Array[String] = []
+    var keptMap: Map[String, String] = [:]
+    for line in lines {
+        let trimmed = line.trim()
+        kept.push(trimmed)
+        keptMap[trimmed] = trimmed
+    }
+    assert(kept[0] == "first long line")
+    assert(kept[1] == "second long line")
+    assert(kept[2] == "third long line")
+    assert(keptMap.get("second long line") == "second long line")
+
+    let held = Held { value: "   record field string   ".trim() }
+    assert(held.value == "record field string")
+
+    let capSource = "   captured long string   "
+    let captured = capSource.trim()
+    let f = () { captured }
+    assert(f() == "captured long string")
+
+    let task = spawn extractTrimmed("   spawned task string   ")
+    assert(task.wait() == "spawned task string")
+
+    "safety-ok"
+}
+
+fn main() {
+    let items = ["   the quick brown fox   ", "   jumps over the lazy dog   "]
+    console.println("{testBasicAndChained()} {testLoopsAndUnicodeSlotReuse()} {testMapAndBorrowingCall()}")
+    console.println("{testMixedBranches()} {sumTrimViewLengths(items)} {testAdversarialSafety()}")
+}
+
+// expect-stdout: basic-ok loops-ok map-ok
+// expect-stdout: 262 42 safety-ok
+// expect-no-optimization: 44:17 region betweenWithin

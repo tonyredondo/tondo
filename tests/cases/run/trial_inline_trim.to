@@ -117,6 +117,6 @@ fn main() {
 // expect-optimization: 79:18 inlined
 // expect-no-optimization: 79:18 region betweenWithin
 // expect-optimization: 87:17 inlined
-// expect-optimization: 87:17 region in `prelude.trimWhitespace`, `textNative.betweenWithin(text, start, end)` goes in the region of a turn of the loop at line 86
+// expect-no-optimization: 87:17 region betweenWithin
 // expect-optimization: 108:23 inlined is inlined: the body of `modeWeight` is copied here
 // expect-optimization: 108:48 call stays a call of `staysCall`: its body costs 49, more than the 31 inlining takes

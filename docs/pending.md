@@ -35,12 +35,17 @@ before the chain's rest because the chain's adapters wait for it too.
    on 2026-11-23, five tests that fail on x86-64 and two jobs that do not
    fit their time. First because they say whether what is on main is sound,
    and anything they find is fixed before more is built on it.
-2. **`trim` and trial inlining**: the bounded trial inliner (`inline_by_trial`),
-   `prelude.trimWhitespace` in Tondo, and `fold_between_byte_length` landed on
-   `b3-trial-inline-trim` (`texts/trim read` −57.5% ins / 0 allocs; `texts/trim`
-   −18.8% ins; zero instruction regressions across all 75 rows, binary growth
-   <= 0.97%). Closing the remaining copy cost on `texts/trim` vs Go waits for
-   step 5 (views of texts).
+2. **`trim`, trial inlining, and frame-lent string views**: `inline_by_trial`,
+   `prelude.trimWhitespace`, and `fold_between_byte_length` landed on
+   `b3-trial-inline-trim`, and Phase 1 frame-lent zero-copy views
+   (`StrFrameView` / `StrOp::BetweenView` + `StrOp::InPlace` raw byte pointers)
+   landed on `b3-string-views` (`texts/trim` 7.60–8.03 ns / 156 ins / 0 allocs,
+   −40.2% ins vs `b3-trial-inline-trim`; `texts/trim read` 6.35–6.57 ns / 135
+   ins / 0 allocs; `chars ascii` and `chars other` +0.0% ins; zero regressions
+   across all 75 rows; example binaries −0.06% to +0.10%). Remaining gap on
+   `texts/trim` and `texts/trim read` vs Go (`4.37 ns` / `4.16 ns`) is now
+   mostly `testing.bench` harness overhead (`StdFn::Keep` unwind check + loop
+   counter spill).
 3. **The chain's rest**: the loop's fast arm after its branch, which is
    also what the chars rows lack, and the reads of the task's attention.
    Then a new table against Go, at the baseline and at x86-64-v3. Here
@@ -52,8 +57,11 @@ before the chain's rest because the chain's adapters wait for it too.
    same hour, which is the same work with the same tools. The examples'
    are a larger share of real programs than any row left, and the round
    says which rows texts reach.
-5. **The views of texts**: their two numbers, which steps 2 and 4 give,
-   then the maintainer's decision.
+5. **Optional Phase 2 escaping string views**: Phase 1 frame-lent `StrFrameView`
+   landed on `b3-string-views` (0 allocs on non-escaping `trim`/`removePrefix`/
+   `removeSuffix`/`splitOnce`, zero Go-style pinning leaks). Bounded-waste
+   heap views (`StrHeapView`) wait on whether step 4's profiles of `examples/`
+   show meaningful escaping slice allocations left.
 6. **An array of tasks waited for as one wait, then `parallel for` and
    `.parallel()`**: the largest piece, after what it stands on.
 7. **The tightening**: texts' counts at direct sites, the header at 16

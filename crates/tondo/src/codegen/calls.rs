@@ -84,11 +84,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 if crate::hir::NATIVES[index as usize].symbol == "tondo_rt_text_byte_at" =>
             {
                 let (text, offset) = (values[0], values[1]);
-                let read = |this: &mut Self| {
-                    let address = this.e.fb.ins().iadd(text, offset);
-                    this.e.fb.ins().uload8(types::I64, flags(), address, STRING_BYTES as i32)
-                };
                 let within = crate::hir::NATIVES[index as usize].name == "byteWithin";
+                let in_place = self.held_in_place(&args[0]);
+                if in_place {
+                    debug_assert!(within, "guarded byteAt is never hoisted to InPlace");
+                    let address = self.e.fb.ins().iadd(text, offset);
+                    return Some(self.e.fb.ins().uload8(types::I64, flags(), address, 0));
+                }
+                let read = |this: &mut Self| {
+                    let base = this.long_bytes_ptr(text);
+                    let address = this.e.fb.ins().iadd(base, offset);
+                    this.e.fb.ins().uload8(types::I64, flags(), address, 0)
+                };
                 let short = |this: &mut Self| {
                     let byte = this.short_byte(text, offset, types::I64);
                     if within {
@@ -115,8 +122,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     this.e.fb.switch_to_block(done);
                     vec![this.e.fb.block_params(done)[0]]
                 };
-                let in_place = self.held_in_place(&args[0]);
-                Some(self.by_form(text, in_place, &[types::I64], short, long)[0])
+                Some(self.by_form(text, false, &[types::I64], short, long)[0])
             }
             Callee::Std(StdFn::Native(index)) => {
                 // Arithmetic the processor does in one instruction, as
