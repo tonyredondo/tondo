@@ -277,12 +277,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     pub(super) fn emit_panic(&mut self, code: u32, message: ir::Value, span: Span) {
-        let code = self.e.fb.ins().iconst(types::I32, code as i64);
-        let location = self.location(span);
         let outer = self.e.fb.srcloc();
         let site = self.site(span.start, None);
         self.e.fb.set_srcloc(site);
         self.keep_registers();
+        let code = self.e.fb.ins().iconst(types::I32, code as i64);
+        let location = self.location(span);
         self.e.call_rt(Rt::Panic, &[code, message, location]);
         self.e.fb.ins().trap(TrapCode::user(1).unwrap());
         self.e.fb.set_srcloc(outer);
@@ -327,6 +327,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             None => self.e.fb.ins().brif(condition, failed, &[], next, &[]),
         };
         self.e.fb.switch_to_block(failed);
+        let outer = self.e.fb.srcloc();
+        let site = self.site(span.start, None);
+        self.e.fb.set_srcloc(site);
+        // Save registers at the very start of the cold panic block, before
+        // widening or staging panic arguments can overwrite a register that
+        // held a local live at the failed check.
+        self.keep_registers();
         let (detail, a, b, ty) = values(self);
         let a = self.widest(a, detail & 0x100 != 0);
         let b = self.widest(b, detail & 0x200 != 0);
@@ -335,9 +342,6 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let code = self.e.fb.ins().iconst(types::I32, code as i64);
         let detail = self.e.fb.ins().iconst(types::I32, detail as i64);
         let location = self.location(span);
-        let outer = self.e.fb.srcloc();
-        let site = self.site(span.start, None);
-        self.e.fb.set_srcloc(site);
         let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 32, 3);
         let slot = self.e.fb.create_sized_stack_slot(data);
         self.e.fb.ins().stack_store(POINTER, a, slot, 0);
@@ -346,12 +350,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         match self.unwind_to {
             // A panic a `recover` may stop returns, and unwinds (15.9).
             Some(target) => {
-                self.keep_registers();
                 self.e.call_rt(Rt::PanicValuesUnwind, &[code, detail, values, name, location]);
                 self.e.fb.ins().jump(target, &[]);
             }
             None => {
-                self.keep_registers();
                 self.e.call_rt(Rt::PanicValues, &[code, detail, values, name, location]);
                 self.e.fb.ins().trap(TrapCode::user(1).unwrap());
             }

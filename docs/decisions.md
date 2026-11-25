@@ -10076,3 +10076,29 @@ side alone. Six of the twelve programs are smaller, by up to 0.21%,
 and none is larger. Compiling is the same: no row of `bench/compile.to
 --old` moved by more than 5%, the most being `server`'s build, 1.4% more
 instructions, and `--guard` passes.
+
+## A failed check keeps its registers first, by a direct call
+
+A dump at a check that fails shows the locals its code still held, from the
+registers that `tondo_rt_keep_registers` saves in the check's cold block.
+The block widened and staged the panic's values first and called
+`keep_registers` after them, and on aarch64 the call went through the GOT,
+whose address a scratch register takes before the call. A local that the
+register allocator kept in one of those registers would be dumped with the
+value written over it. `keep_registers` is now the first thing a cold block
+does, and a call of the runtime that keeps every register is colocated: a
+direct `bl` on aarch64, as the glue's and a latent site's already were.
+
+It was found through another session's optimization work, PR #51 (its
+commit 4dad11c9, whose change is this one): a change of allocation there
+made observe's `a_release_dump_keeps_what_a_failed_check_held` fail on
+aarch64. On main no program showed a wrong value: picks.to, a bounds check
+that fails with `sum` and `pick` live, dumped both right on aarch64 under
+Linux, with main's aarch64 tondo under emulation, and under macOS on the M2.
+Whether a value is lost is the allocator's choice, so the test holds what
+rules it out: every call of `keep_registers` in the program is a direct
+`CALL26`, and the locals live at each failed check are where the bindings
+say at that call. The allocator then chooses other registers in some of
+the code that does not fail, as the cold block's values live differently:
+in kvstore, eleven functions changed, each by the same number of
+instructions or one to four fewer.

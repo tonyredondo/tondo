@@ -180,11 +180,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.call_rt(Rt::TestWhere, &[location])
             }
             Callee::Std(StdFn::PanicUnwind(code)) => {
+                self.keep_registers();
                 let code = self.e.fb.ins().iconst(types::I32, i64::from(code));
                 let location = self.location(self.span);
                 values.insert(0, code);
                 values.push(location);
-                self.keep_registers();
                 self.e.call_rt(Rt::PanicUnwind, &values)
             }
             Callee::Std(StdFn::ContextGet(index)) => {
