@@ -197,6 +197,10 @@ its own, with `gh workflow run CI --ref <branch>`.
   The toolchain does what it can by itself rather than ask for
   annotations.
 - Keep it small: no code a feature does not need.
+- Security and protocol code is used and tuned, not written again here:
+  TLS, cryptography and the framing of HTTP stay in their libraries, and an
+  optimization changes how they are used. A library that is faster, well
+  tested and widely used may replace one; code of our own may not.
 - Nothing that reaches an executable takes its order from a hash map's
   iteration: a build is the same bytes twice, as
   `cargo test -p tondo --test cli a_build_is_the_same_bytes_twice` holds.
