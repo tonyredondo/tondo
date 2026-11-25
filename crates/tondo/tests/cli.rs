@@ -1624,6 +1624,35 @@ fn a_release_build_lays_a_function_after_its_caller() {
     assert!(order.iter().all(Option::is_some) && order.is_sorted(), "{order:x?}");
 }
 
+/// The releases a Release build drops after a move leave nothing alive and
+/// release nothing twice. The case runs with regions, where a value of the
+/// loop's region is let go of with it whether released or not: built
+/// without them, every value is counted on the heap, so the check of leaks
+/// sees each release a move should have kept. A pass that took the record's
+/// first text for its only counted part, and dropped the release that the
+/// second still needed, fails here with "4 object(s) leaked", and passes
+/// the case.
+#[test]
+fn releases_dropped_after_moves_leak_nothing_without_regions() {
+    let case = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cases/run/moved_released.to");
+    let source = std::fs::read_to_string(case).unwrap();
+    let expected: String = source
+        .lines()
+        .filter_map(|line| line.strip_prefix("// expect-stdout: "))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let dir = project_at("moved-released", &[("main.to", source.as_bytes())]);
+    let built = common::command(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "main.to", "--no-lifetimes", "--output", "main"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let ran = common::command(dir.join("main")).env("TONDO_RT_CHECK_LEAKS", "1").output().unwrap();
+    assert!(ran.status.success(), "{:?}: {}", ran.status, String::from_utf8_lossy(&ran.stderr));
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), expected);
+}
+
 /// `--no-logpoints`, or `logpoints = false` in a project's `[build]`, builds
 /// a program without the places a logpoint writes its call at, the start of
 /// each line: its functions are smaller, it does what it did, and the build

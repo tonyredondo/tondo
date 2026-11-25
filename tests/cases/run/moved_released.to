@@ -1,0 +1,141 @@
+import std.console
+
+// A local whose whole value, or the one part of it that is counted, moved
+// out on every way to its release, with nothing written to it since, has
+// nothing left to release: a release build drops the release, and the zero
+// the move wrote when nothing reads the local after. A local moved on one
+// way only, or given a new value after its move, is still released. Every
+// text here is longer than a word holds, so that the check of leaks counts
+// it: a test of `cli.rs` builds this case without regions, where it would
+// see one released twice or never (`releases_dropped_after_moves_...`).
+
+type Named = {
+    name: String
+    age: Int
+}
+
+type Couple = {
+    first: String
+    second: String
+}
+
+enum Parsed {
+    Word(String, Int)
+    Number(Int)
+}
+
+fn found(lines: Array[String], key: String): String? {
+    for line in lines {
+        if line.startsWith(key) {
+            return "found the line {line}"
+        }
+    }
+    none
+}
+
+fn parsed(line: String, n: Int): Parsed {
+    if line.length() > 8 { Parsed.Word("the word {line}", n) } else { Parsed.Number(n) }
+}
+
+fn checked(line: String): String ! String {
+    if line.length() <= 8 {
+        fail "a refused {line}"
+    }
+    "an accepted {line}"
+}
+
+fn named(line: String, n: Int): Named {
+    Named { name: "somebody called {line}", age: n }
+}
+
+fn coupled(line: String): Couple {
+    Couple { first: "the first of {line}", second: "the second of {line}" }
+}
+
+// The option's text moves out whole where it is some, and there is
+// nothing to release where it is none.
+fn options(lines: Array[String]): Int {
+    var sum = 0
+    for line in lines {
+        let hit = found(lines, line)
+        match hit {
+            some(text) => sum += text.length()
+            none => {}
+        }
+    }
+    sum
+}
+
+// The one counted part of a variant, and of a record, moves out; one of
+// two counted parts moving out leaves the other to release.
+fn parts(lines: Array[String]): Int {
+    var sum = 0
+    var n = 0
+    for line in lines {
+        let word = parsed(line, n)
+        match word {
+            Parsed.Word(text, at) => sum += text.length() + at
+            Parsed.Number(at) => sum += at
+        }
+        let person = named(line, n)
+        let name = person.name
+        sum += name.length() + person.age
+        let couple = coupled(line)
+        let first = couple.first
+        sum += first.length()
+        n += 1
+    }
+    sum
+}
+
+// Moved out in both arms of a result.
+fn results(lines: Array[String]): Int {
+    var sum = 0
+    for line in lines {
+        match checked(line) {
+            ok(text) => sum += text.length()
+            err(text) => sum -= text.length()
+        }
+    }
+    sum
+}
+
+fn keep(texts: var Array[String], text: String) {
+    texts.push(text)
+}
+
+// Moved on one way only: released on the other.
+fn sometimes(lines: Array[String]): Int {
+    var kept: Array[String] = []
+    for line in lines {
+        let text = "a text made from {line}"
+        if line.length() > 8 {
+            keep(var kept, text)
+        }
+    }
+    kept.length()
+}
+
+// Moved, then given a new value: the last one is released.
+fn renewed(lines: Array[String]): Int {
+    var kept: Array[String] = []
+    var text = "the first text of all"
+    for line in lines {
+        keep(var kept, text)
+        text = "the text after {line}"
+    }
+    kept.length() + text.length()
+}
+
+fn main() {
+    let lines = ["a short", "a much longer line", "tiny", "another long line here"]
+    console.println("{options(lines)}")
+    console.println("{parts(lines)}")
+    console.println("{results(lines)}")
+    console.println("{sometimes(lines)} {renewed(lines)}")
+}
+
+// expect-stdout: 111
+// expect-stdout: 288
+// expect-stdout: 33
+// expect-stdout: 2 41
