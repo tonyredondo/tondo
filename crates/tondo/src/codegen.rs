@@ -366,6 +366,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     let mut flags = settings::builder();
     // A debug build keeps the code as written, statement after statement.
     flags.set("opt_level", if debug { "none" } else { "speed" }).map_err(|e| e.to_string())?;
+    if !debug {
+        // Each function on 32 bytes, so that the loops the code generator
+        // starts on 32 bytes within it are on the processor's own (`vcode.rs`).
+        flags.set("log2_min_function_alignment", "5").map_err(|e| e.to_string())?;
+    }
     flags.set("is_pic", "true").map_err(|e| e.to_string())?;
     // Integers of 128 bits pass as C passes them, in two registers.
     flags.set("enable_llvm_abi_extensions", "true").map_err(|e| e.to_string())?;

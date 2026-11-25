@@ -2052,6 +2052,40 @@ fn a_loop_that_reads_no_character_decodes_none() {
     assert_eq!(said, "8\n");
 }
 
+/// A Release build starts a loop's turn on 32 bytes, where the processor
+/// fetches and caches its decoded instructions, so that no layout of the
+/// code splits a short loop across two of them.
+#[test]
+fn a_release_loop_starts_on_32_bytes() {
+    if !cfg!(target_arch = "x86_64") {
+        return;
+    }
+    let dir = scratch("aligned");
+    let program = "import std.console\n\nfn total(values: Array[Int]): Int {\n    var sum = 0\n    \
+        for value in values {\n        sum += value\n    }\n    sum\n}\n\n\
+        fn main() {\n    console.println(\"{total([1, 2, 3])}\")\n}\n";
+    std::fs::write(dir.join("main.to"), program).unwrap();
+    let (said, stderr, status) = tondo(&dir, &["asm", "main.to", "total"]);
+    assert_eq!(status, 0, "{stderr}");
+    // Each instruction's offset and text, to find where a jump back lands:
+    // its displacement counts from the instruction after it.
+    let code: Vec<(u64, &str)> = said
+        .lines()
+        .filter_map(|line| {
+            let (offset, text) = line.trim_start().split_once("  ")?;
+            Some((u64::from_str_radix(offset, 16).ok()?, text))
+        })
+        .collect();
+    let back: Vec<u64> = code
+        .windows(2)
+        .filter_map(|pair| {
+            let back = pair[0].1.split_once(" $-0x")?.1;
+            Some(pair[1].0 - u64::from_str_radix(back, 16).ok()?)
+        })
+        .collect();
+    assert!(!back.is_empty() && back.iter().all(|to| to % 32 == 0), "{back:x?}\n{said}");
+}
+
 /// `asm --runtime` gives the machine code of a function of the runtime, as
 /// this tondo links it, and what changed in it from another tondo's.
 #[test]

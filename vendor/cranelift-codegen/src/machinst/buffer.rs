@@ -801,6 +801,46 @@ impl<I: VCodeInst> MachBuffer<I> {
         // Post-invariant: by `optimize_branches()` (see argument there).
     }
 
+    /// Tondo: after binding `label` (so `optimize_branches` has already
+    /// truncated any fallthrough jump targeting `label`), pad with NOPs to
+    /// `align` bytes and move `label` to the aligned offset so loop back-edges
+    /// land on the aligned loop header while fallthrough entry slides through
+    /// the NOPs once.
+    pub fn align_bound_label(
+        &mut self,
+        label: MachLabel,
+        align: CodeOffset,
+        mut emit_nop: impl FnMut(&mut Self, usize),
+    ) {
+        debug_assert!(align.is_power_of_two());
+        if self.label_aliases[label.0 as usize] != UNKNOWN_LABEL {
+            return;
+        }
+        let cur = self.cur_offset();
+        if self.label_offsets[label.0 as usize] != cur {
+            return;
+        }
+        let rem = cur & (align - 1);
+        if rem == 0 {
+            return;
+        }
+        let pad = align - rem;
+        let lookahead = I::worst_case_size() + I::worst_case_island_growth();
+        if self.island_needed(pad + lookahead) {
+            return;
+        }
+        let target = cur + pad;
+        while self.cur_offset() < target {
+            let left = (target - self.cur_offset()) as usize;
+            emit_nop(self, left);
+        }
+        debug_assert_eq!(self.cur_offset(), target);
+        self.label_offsets[label.0 as usize] = target;
+        self.labels_at_tail.clear();
+        self.labels_at_tail_off = target;
+        self.labels_at_tail.push(label);
+    }
+
     /// Lazily clear `labels_at_tail` if the tail offset has moved beyond the
     /// offset that it applies to.
     fn lazily_clear_labels_at_tail(&mut self) {
