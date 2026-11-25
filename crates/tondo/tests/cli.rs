@@ -2012,6 +2012,23 @@ fn asm_says_what_a_turn_of_a_loop_runs() {
     );
 }
 
+/// A loop over a text's characters that does not read them decodes none:
+/// the character the iterator gives is a value nothing reads, which a
+/// Release build drops with its decoding.
+#[test]
+fn a_loop_that_reads_no_character_decodes_none() {
+    let dir = scratch("undecoded");
+    let program = "import std.console\n\nfn counted(text: String): Int {\n    var count = 0\n    \
+        for _ in text.chars() {\n        count += 1\n    }\n    count\n}\n\n\
+        fn main() {\n    console.println(\"{counted(\"año 💡 ok\")}\")\n}\n";
+    std::fs::write(dir.join("main.to"), program).unwrap();
+    let (said, stderr, status) = tondo(&dir, &["asm", "main.to", "counted"]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(said.contains("count += 1") && !said.contains("scalarAt"), "{said}");
+    let (said, _, _) = tondo(&dir, &["run", "main.to"]);
+    assert_eq!(said, "8\n");
+}
+
 /// `asm --runtime` gives the machine code of a function of the runtime, as
 /// this tondo links it, and what changed in it from another tondo's.
 #[test]

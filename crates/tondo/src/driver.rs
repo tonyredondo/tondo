@@ -1774,6 +1774,7 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, s
     after("prove", bodies, types, sources);
     crate::split::split(bodies, types, sources);
     crate::borrowed::borrowed(bodies, types);
+    crate::elide::drop_dead_pure(bodies);
     after("split again", bodies, types, sources);
     crate::stack::stack(bodies, types);
     after("stack", bodies, types, sources);
