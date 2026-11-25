@@ -2490,8 +2490,9 @@ optimizado que no cuenta nada y sin lo que `tondo test` mira por su cuenta, las
 actualizaciones perdidas y el orden de los locks (8 del toolchain): mide el
 programa como corre fuera de los tests. No admite `--debug`, `--coverage` ni un
 reporte de cobertura, `--jobs`, `--retry`, `--repeat`, `--allow-flaky`,
-`--schedules` ni `--update-snapshots`. Con `--bench`, la ejecución cuyo valor da
-`bench` es la primera y no se mide; después, cada `bench` mide así:
+`--schedules` ni `--update-snapshots`. Con `--bench`, cada `bench` mide así, y
+después hace la ejecución cuyo valor da, que no se mide; si una ejecución
+medida falla, `bench` da su error sin hacer otra:
 
 1. Calienta durante una décima parte de su tiempo, entre 50 ms y 1 s,
    ejecutando el cuerpo en tandas que doblan las de la anterior.

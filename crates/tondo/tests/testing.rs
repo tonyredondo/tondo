@@ -986,7 +986,7 @@ fn compares_benchmarks_with_another_compiler() {
 }
 
 /// A benchmark checks its answer with what `testing.bench` gives, from a run
-/// before the timed ones (testing 10.4): a plain run runs the body once, a
+/// after the timed ones (testing 10.4): a plain run runs the body once, a
 /// wrong answer fails with both sides, plain and under `--bench`, and with
 /// another `tondo` whose side gives another answer the row is not compared
 /// and the run fails, so no comparison is read from work that differs.
@@ -996,9 +996,16 @@ fn a_benchmark_checks_its_answer() {
         let shift = Int.parse(env.get(\"TONDO_TEST_SHIFT\") ?? \"0\") ?? 0\n    (0..1_000).collect().sum() + shift\n}\n\n\
         test once {\n    let runs = sync.Atomic(0)\n    assert(testing.bench(\"counted\", () => runs.add(1)) == 1)\n    \
         assert(runs.load() == 1)\n}\n\ntest summed {\n    assert(testing.bench(\"sum\", () => answer()) == 499_500)\n}\n\n\
-        test doubled {\n    assert(testing.bench(\"doubled\", () => answer() * 0 + 42) == 42)\n}\n";
+        test doubled {\n    assert(testing.bench(\"doubled\", () => answer() * 0 + 42) == 42)\n}\n\n\
+        test last {\n    let runs = sync.Atomic(0)\n    assert(testing.bench(\"last\", () => runs.add(1)) == runs.load())\n}\n";
     let dir = project("checked-answer", tests);
     let (stdout, stderr, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    // The run whose value it gives is the last, after the measured ones: a
+    // body that counts its runs gives their whole count, so nothing of it
+    // lives across the measured loop.
+    let last = ["test", "--bench", "--bench-time", "0.05", "--exact", "app::unit::app::last"];
+    let (stdout, stderr, status) = tondo(&dir, &last);
     assert_eq!(status, 0, "{stdout}{stderr}");
     // Another answer fails the test with both sides, plain and measured;
     // `once` counts the runs of a plain run, which `--bench` makes many.

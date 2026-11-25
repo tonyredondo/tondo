@@ -49,12 +49,13 @@ pub fn VirtualTime.settle(self)
 pub fn VirtualTime.advance(self, duration: time.Duration)
 
 /// Makes the test a benchmark, called in its body (testing 10.4): runs the
-/// closure once and gives what it gave, and with `tondo test --bench` then
+/// closure once and gives what it gave; with `tondo test --bench` it first
 /// measures how long a run takes and what it allocates, keeping what each
-/// run gives. The run whose value it gives is not measured, and in a plain
-/// run it is the only one: a benchmark checks its answer with it, so that a
-/// body that stops doing its work fails rather than looks faster. The call
-/// fails as the closure does.
+/// run gives, and makes that run after the measured ones, unmeasured. In a
+/// plain run it is the only one: a benchmark checks its answer with it, so
+/// that a body that stops doing its work fails rather than looks faster.
+/// The call fails as the closure does, a measured run's error ending the
+/// benchmark with it.
 ///
 /// ```tondo
 /// import std.testing

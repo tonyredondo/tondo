@@ -10102,3 +10102,29 @@ say at that call. The allocator then chooses other registers in some of
 the code that does not fail, as the cold block's values live differently:
 in kvstore, eleven functions changed, each by the same number of
 instructions or one to four fewer.
+
+## A benchmark's value comes from a run after the measured ones
+
+Since a benchmark gives its answer (662246a4), the run whose value
+`testing.bench` gives came before the measured runs, and its value lived
+across their loop to be given after it. In a body the inliner opens into
+the test, that value took a register from the code measured:
+`map filter sum 10000` went from 373,588 instructions a run to 383,522,
+one more an element as its loop reloaded from the frame, and
+`numbers map filter sum 10000` with it (decision 229 found the commit). The
+run whose value the call gives now comes after the measured ones and is
+not measured; a measured run that fails ends the benchmark with its error,
+with no run after it; in a plain run it is still the only one. The test
+`last` holds the order: a body that counts its runs gives their whole
+count under `--bench`, where with the value's run first it gave 1 of
+15,178,217.
+
+Measured against main's tondo, d56a1d88, by instructions over every row and
+example, every answer checked on both sides: `map filter sum 10000` runs
+in 373,586.6 instructions, where 8044d9ff's sources with their own compiler
+give 373,588.2; `numbers map filter sum 10000` in 373,645.3 for 373,589.2,
+56 a run, a cost of the run and not of its loop; both 2.6% fewer than
+main. No other row moved past 1%, and `callback 1000`, measured alone over
+four orders of the functions, not at all. The other way, the measured loop
+compiled apart so that a row's code does not depend on what else its test
+holds, moves every row's base and is left to weigh with the next table.
