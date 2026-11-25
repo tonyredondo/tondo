@@ -874,7 +874,7 @@ fn a_dump_keeps_the_bindings_of_a_task_that_waits() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-waits");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let program = "import std.console\n\nfn total(items: Array[String]): Int {\n    let prices = [3, 4]\n    _ = console.readLine()\n    prices[items.length()]\n}\n\nfn main() {\n    let items = [\"a\", \"b\", \"c\"]\n    let job = spawn total(items)\n    console.println(\"{items.length()} {job.wait()}\")\n}\n";
+    let program = "import std.console\n\nfn total(items: Array[String]): Int {\n    let prices = [3, 4]\n    _ = console.readLine()\n    prices[items.length()]\n}\n\nfn main() {\n    let items = [\"a\", \"b\", \"c\"]\n    let job = spawn total(items)\n    console.println(\"ready\")\n    let _ = console.flush()\n    console.println(\"{items.length()} {job.wait()}\")\n}\n";
     std::fs::write(dir.join("waits.to"), program).unwrap();
     let executable = dir.join("waits");
     let built = common::command(env!("CARGO_BIN_EXE_tondo"))
@@ -890,16 +890,19 @@ fn a_dump_keeps_the_bindings_of_a_task_that_waits() {
         .env("TONDO_DUMP", &dumps)
         .env("TONDO_DIAGNOSTICS", "1")
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
+    // It serves the tools from its start, which its first line comes after.
+    let mut line = String::new();
+    BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
     until_waiting(child.id(), 2, &dir.join("waiting.dump.json"));
     child.stdin.take().unwrap().write_all(b"go\n").unwrap();
     assert!(!child.wait().unwrap().success());
     let dump = dumps_in(&dumps).pop().expect("the dump of the panic");
     let locals = tondo(&["dump", "read", dump.to_str().unwrap(), "locals", "1", "--json"]);
-    assert_eq!(locals["locals"]["at"], "waits.to:12 in main", "{locals}");
+    assert_eq!(locals["locals"]["at"], "waits.to:14 in main", "{locals}");
     let bindings: Vec<String> = locals["locals"]["bindings"]
         .as_array()
         .unwrap()
