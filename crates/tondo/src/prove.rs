@@ -345,20 +345,25 @@ impl Facts {
 
     /// `node` grew by `by`: `node - x` grows, `x - node` shrinks.
     fn shift(&mut self, node: Node, by: i128) {
+        self.shift_range(node, Some(by), Some(by));
+    }
+
+    /// `node` grew by a value between `low` and `high`: `node - x` grows
+    /// at most by `high` and `x - node` shrinks at least by `low`.
+    fn shift_range(&mut self, node: Node, low: Option<i128>, high: Option<i128>) {
         let shifted: HashMap<(Node, Node), i128> = self
             .0
             .iter()
-            .map(|(&(a, b), &k)| {
+            .filter_map(|(&(a, b), &k)| {
                 let k = if a == node {
-                    k + by
+                    k + high?
                 } else if b == node {
-                    k - by
+                    k - low?
                 } else {
                     k
                 };
-                ((a, b), k)
+                (k.unsigned_abs() < LIMIT as u128).then_some(((a, b), k))
             })
-            .filter(|&(_, k)| k.unsigned_abs() < LIMIT as u128)
             .collect();
         self.0 = shifted;
     }
@@ -1329,6 +1334,38 @@ impl Prover<'_> {
             facts.add(other, node, -offset);
             return;
         }
+        // `local = local + delta` or `local = local - delta` where `delta`
+        // has a known bound, as a UTF-8 step in `2..=4`.
+        let shifted = match rvalue {
+            Rvalue::Binary(BinOp::Add, a, b) | Rvalue::Exact(BinOp::Add, a, b) => {
+                match (self.value(a), self.value(b)) {
+                    (Some((n, o)), Some((d, doff))) | (Some((d, doff)), Some((n, o))) if n == node && d != node => {
+                        let low = facts.bound(Node::Zero, d).map(|k| -k + doff + o);
+                        let high = facts.bound(d, Node::Zero).map(|k| k + doff + o);
+                        ((low.is_some() || high.is_some()) && low.zip(high).is_none_or(|(l, h)| l <= h))
+                            .then_some((low, high))
+                    }
+                    _ => None,
+                }
+            }
+            Rvalue::Binary(BinOp::Sub, a, b) | Rvalue::Exact(BinOp::Sub, a, b) => {
+                match (self.value(a), self.value(b)) {
+                    (Some((n, o)), Some((d, doff))) if n == node && d != node => {
+                        let low = facts.bound(d, Node::Zero).map(|k| o - (k + doff));
+                        let high = facts.bound(Node::Zero, d).map(|k| o - (-k + doff));
+                        ((low.is_some() || high.is_some()) && low.zip(high).is_none_or(|(l, h)| l <= h))
+                            .then_some((low, high))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some((low, high)) = shifted {
+            facts.shift_range(node, low, high);
+            tests.retain(|_, (_, (a, _), (b, _))| *a != node && *b != node);
+            return;
+        }
         // Otherwise only the values it may hold.
         let constant = |operand: &Operand| match self.value(operand) {
             Some((Node::Zero, c)) => Some(c),
@@ -1345,18 +1382,20 @@ impl Prover<'_> {
                 return;
             }
             // A text's length in bytes, as an array's length: the text's
-            // own when the facts follow it.
+            // own when the facts follow it. Its header takes at least 16
+            // bytes of the allocation (`isize::MAX`), so `byteLength() + 4`
+            // never overflows.
             Rvalue::StrOp(crate::hir::StrOp::ByteLength, operands, _) => match &operands[..] {
                 [Operand::Copy(Place { local: text, path })] if path.is_empty() && self.text(*text) => {
                     forget_local(facts, tests, local);
                     let length = Node::Len(*text);
                     facts.add(Node::Zero, length, 0);
-                    facts.add(length, Node::Zero, i64::MAX as i128);
+                    facts.add(length, Node::Zero, (i64::MAX - 16) as i128);
                     facts.add(node, length, 0);
                     facts.add(length, node, 0);
                     return;
                 }
-                _ => Some((0, i64::MAX as i128)),
+                _ => Some((0, (i64::MAX - 16) as i128)),
             },
             // A checked product by a constant went on, so it fits, a
             // multiple of the constant: `3 * n` is below `Int.Max`, and `3 * n
