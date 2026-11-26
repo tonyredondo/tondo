@@ -206,6 +206,15 @@ const (
 	otherWords = "el ñandú comió más piñones αβγ δέλτα 日本語の文章 "
 )
 
+// megabyte gives about 1 MiB of text, as the Tondo side makes it: the
+// ASCII words, or the other words with a character of four bytes, 𝄞.
+func megabyte(other bool) string {
+	if other {
+		return strings.Repeat(otherWords+"𝄞 ", 14_169)
+	}
+	return strings.Repeat(asciiWords, 23_831)
+}
+
 func counted(text string) int {
 	count := 0
 	for range text {
@@ -285,6 +294,26 @@ func BenchmarkTexts(b *testing.B) {
 	b.Run("chars other", func(b *testing.B) {
 		for b.Loop() {
 			sinkInt = counted(other)
+		}
+	})
+	// Bytes made text: Go copies them, where Tondo also checks that they
+	// are UTF-8.
+	longASCII, longOther := megabyte(false), megabyte(true)
+	asciiBytes, otherBytes := []byte(longASCII), []byte(longOther)
+	b.Run("fromBytes ascii", func(b *testing.B) {
+		for b.Loop() {
+			sinkString = string(asciiBytes)
+		}
+		if len(sinkString) != 1_048_564 || sinkString != longASCII {
+			b.Fatalf("fromBytes ascii gave %d bytes", len(sinkString))
+		}
+	})
+	b.Run("fromBytes other", func(b *testing.B) {
+		for b.Loop() {
+			sinkString = string(otherBytes)
+		}
+		if len(sinkString) != 1_048_506 || counted(sinkString) != 651_774 || sinkString != longOther {
+			b.Fatalf("fromBytes other gave %d bytes, %d characters", len(sinkString), counted(sinkString))
 		}
 	})
 }

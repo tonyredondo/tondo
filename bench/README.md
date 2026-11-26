@@ -268,6 +268,17 @@ thousand instructions a variable, 90 allocations with 2 variables, 469
 with this table's 55 and 1,719 with the 225 of a session's shell, which is
 why the table names its environment.
 
+Three rows read about a mebibyte of text whole, as a file or a response is
+read: `texts/fromBytes ascii` and `texts/fromBytes other` make text of
+bytes, and `files/readText` reads a file that the page cache holds. Go
+copies the bytes into a string as they are; Tondo checks that they are
+UTF-8 too, which is most of the difference they show, and the most where
+the text is not ASCII. Tondo's runs of them stay within about 2%; Go's
+move by up to two thirds from one run to the next, as its collector, with
+a mebibyte allocated at each run, runs at another moment: six samples
+gave 35.0 to 58.8 µs, 52.3 to 73.2 and 140.3 to 236.5. The table reads
+them by Go's median, as every row.
+
 The table before this one, at 25ff8924, gave 60 and 59 rows of 75 at or
 under Go's time in two runs; this one gives 65 of 77 in one run, the two
 rows that start a program new since. Go's side is as it was then: its

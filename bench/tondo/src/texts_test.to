@@ -8,6 +8,12 @@ const Ascii: String = "the quick brown fox jumps over the lazy dog "
 /// which take two and three bytes a character.
 const Other: String = "el ñandú comió más piñones αβγ δέλτα 日本語の文章 "
 
+/// About 1 MiB of text, as a file or a response is read whole: the Ascii
+/// words, and the Other words with a character of four bytes, `𝄞`.
+fn megabyte(other: Bool): String {
+    if other { "{Other}𝄞 ".repeat(14_169) } else { Ascii.repeat(23_831) }
+}
+
 fn parsed(texts: Array[String]): Int {
     var total = 0
     for text in texts {
@@ -61,4 +67,13 @@ test texts {
     assert(testing.bench("parse ints 1000", () => parsed(written)) == 3_955_540_500)
     assert(testing.bench("chars ascii", () => counted(ascii)) == 1100)
     assert(testing.bench("chars other", () => counted(other)) == 1100)
+    // Bytes made text: Tondo checks that they are UTF-8, which Go does not.
+    let (longAscii, longOther) = (megabyte(false), megabyte(true))
+    let asciiBytes = longAscii.bytes()
+    let fromAscii = testing.bench("fromBytes ascii", () => String.fromBytes(asciiBytes))?
+    assert(fromAscii.byteLength() == 1_048_564 and fromAscii == longAscii)
+    let otherBytes = longOther.bytes()
+    let fromOther = testing.bench("fromBytes other", () => String.fromBytes(otherBytes))?
+    assert(fromOther.byteLength() == 1_048_506 and counted(fromOther) == 651_774)
+    assert(fromOther == longOther)
 }

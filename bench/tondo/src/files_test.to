@@ -1,0 +1,17 @@
+import std.fs
+import std.testing
+
+/// A file of about 1 MiB read whole as text, from the page cache once the
+/// setup has written it: an open, a read, a close, and Tondo's check that
+/// it is UTF-8, which Go does not make.
+test files {
+    let directory = fs.createTemporaryDirectory(pattern: "bench-files-*")?
+    defer {
+        _ = fs.remove(directory, recursive: true)
+    }
+    let file = "{directory}/other.txt"
+    let text = megabyte(true)
+    fs.writeText(file, text)?
+    let read = testing.bench("readText", () => fs.readText(file))?
+    assert(read.byteLength() == 1_048_506 and read == text)
+}
