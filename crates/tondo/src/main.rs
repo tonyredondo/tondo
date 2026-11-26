@@ -374,6 +374,9 @@ fn rest_json(args: &[OsString]) -> bool {
 
 fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     use tondo::runner::{self, Codeowners, Glob, Order, Selector};
+    if args.iter().any(|arg| arg == "--series") {
+        return series_command(args);
+    }
     let projects = args.iter().take_while(|a| !a.to_string_lossy().starts_with('-')).count();
     if projects > 1 {
         return several_tests(&args[..projects], &args[projects..]);
@@ -531,6 +534,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--against" => against = Some(value()?),
             "--compiler" => compiler = Some(value()?),
             "--same" => same = true,
+            "--fresh" => return Err(usage("--fresh measures a series again: it goes with --series".into())),
             "--max-regression" => {
                 let percent = value()?
                     .trim_end_matches('%')
@@ -1066,6 +1070,48 @@ fn compiler_baseline(
     });
     let (sha256, ours) = (compared.sha256, compared.ours);
     Ok(tondo::runner::Baseline::Compiler { name: reference.to_string(), commit, sha256, ours, saved, code })
+}
+
+/// `tondo test <projects> --bench --series <base>..<head>` (testing 10.4):
+/// the options the whole alone takes are kept apart, and every other one
+/// goes to each `tondo` as given.
+fn series_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let usage = |message: &str| format!("{message}\n{USAGE}");
+    let mut projects: Vec<PathBuf> =
+        args.iter().take_while(|a| !a.to_string_lossy().starts_with('-')).map(PathBuf::from).collect();
+    let mut rest = args[projects.len()..].iter().map(|a| a.to_string_lossy().into_owned());
+    let (mut range, mut bench, mut fresh, mut json) = (None, false, false, false);
+    let (mut measuring, mut whole) = (Vec::new(), Vec::new());
+    while let Some(arg) = rest.next() {
+        let mut value = || rest.next().ok_or_else(|| usage(&format!("{arg} needs a value")));
+        match arg.as_str() {
+            "--series" => range = Some(value()?),
+            "--bench" => bench = true,
+            "--fresh" => fresh = true,
+            "--json" => json = true,
+            "--layouts" | "--max-regression" | "--regression-by" | "--baseline" => {
+                let given = value()?;
+                whole.extend([arg, given]);
+            }
+            "--compiler" | "--against" | "--same" | "--save-baseline" | "--report" | "--test-format" | "--watch"
+            | "--list" | "--bisect" | "--affected" | "--profile" | "--fuzz" => {
+                return Err(usage(&format!(
+                    "--series measures a range of tondos, each against the one before and the last against the \
+                     first: it does not go with {arg}"
+                )));
+            }
+            _ => measuring.push(arg),
+        }
+    }
+    if !bench {
+        return Err(usage("--series is about benchmarks: it goes with --bench"));
+    }
+    if projects.is_empty() {
+        projects.push(PathBuf::from("."));
+    }
+    let range = range.ok_or_else(|| usage("--series needs <base>..<head>"))?;
+    let series = tondo::runner::series::Series { range, projects, measuring, whole, fresh, json };
+    tondo::runner::series::run(&series)
 }
 
 /// The tests of the project as a git revision has it, for `--against`

@@ -306,6 +306,11 @@ pub(super) struct Compared {
 /// A change smaller than this is the same, whatever the interval says.
 const NOISE: f64 = 0.02;
 
+/// A benchmark's instructions moved when they changed by this fraction or
+/// more (testing 10.4): what names the code that changed beside it, and a
+/// step of a series.
+pub(super) const MOVED: f64 = 0.005;
+
 /// Compares a benchmark with its baseline; with `max`, a fraction, a run
 /// slower, or with `by_instructions` taking more instructions, or
 /// allocating more than that much more has regressed.
@@ -458,30 +463,7 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
     if value["format"] != "tondo-bench-baseline-0.1/1" {
         return Err(format!("{} is not a baseline of `tondo test --save-baseline`", path.display()));
     }
-    let mut measures = HashMap::new();
-    for entry in value["benchmarks"].as_array().into_iter().flatten() {
-        let number = |key: &str| entry[key].as_f64().unwrap_or_default();
-        let (Some(test), Some(name)) = (entry["test"].as_str(), entry["name"].as_str()) else { continue };
-        let samples = entry["samples_ns_per_op"].as_array().into_iter().flatten().filter_map(|s| s.as_f64()).collect();
-        let benchmark = Benchmark {
-            name: name.to_string(),
-            runs: entry["runs_per_sample"].as_u64().unwrap_or(1),
-            samples,
-            allocations: number("allocations_per_op"),
-            bytes: number("bytes_per_op"),
-            region_allocations: number("region_allocations_per_op"),
-            region_bytes: number("region_bytes_per_op"),
-            regions_set_up: number("regions_set_up_per_op"),
-            regions_used: number("regions_used_per_op"),
-            instructions: entry["instructions_per_op"].as_f64(),
-            cycles: entry["cycles_per_op"].as_f64(),
-            branch_misses: entry["branch_misses_per_op"].as_f64(),
-            l1d_misses: entry["l1d_misses_per_op"].as_f64(),
-            l1i_misses: entry["l1i_misses_per_op"].as_f64(),
-            layouts: entry["layouts_ns_per_op"].as_array().into_iter().flatten().filter_map(|l| l.as_f64()).collect(),
-        };
-        measures.insert((test.to_string(), name.to_string()), benchmark);
-    }
+    let measures = measures(&value);
     let environment = &value["environment"];
     let machine = |key: &str| environment[key].as_str().unwrap_or_default().to_string();
     let cpus = environment["cpus"].as_u64().unwrap_or(1) as usize;
@@ -508,6 +490,35 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
         since: None,
         compiler: false,
     })
+}
+
+/// The measures of each benchmark of a saved baseline, by test and name.
+pub(super) fn measures(value: &serde_json::Value) -> HashMap<(String, String), Benchmark> {
+    let mut measures = HashMap::new();
+    for entry in value["benchmarks"].as_array().into_iter().flatten() {
+        let number = |key: &str| entry[key].as_f64().unwrap_or_default();
+        let (Some(test), Some(name)) = (entry["test"].as_str(), entry["name"].as_str()) else { continue };
+        let samples = entry["samples_ns_per_op"].as_array().into_iter().flatten().filter_map(|s| s.as_f64()).collect();
+        let benchmark = Benchmark {
+            name: name.to_string(),
+            runs: entry["runs_per_sample"].as_u64().unwrap_or(1),
+            samples,
+            allocations: number("allocations_per_op"),
+            bytes: number("bytes_per_op"),
+            region_allocations: number("region_allocations_per_op"),
+            region_bytes: number("region_bytes_per_op"),
+            regions_set_up: number("regions_set_up_per_op"),
+            regions_used: number("regions_used_per_op"),
+            instructions: entry["instructions_per_op"].as_f64(),
+            cycles: entry["cycles_per_op"].as_f64(),
+            branch_misses: entry["branch_misses_per_op"].as_f64(),
+            l1d_misses: entry["l1d_misses_per_op"].as_f64(),
+            l1i_misses: entry["l1i_misses_per_op"].as_f64(),
+            layouts: entry["layouts_ns_per_op"].as_array().into_iter().flatten().filter_map(|l| l.as_f64()).collect(),
+        };
+        measures.insert((test.to_string(), name.to_string()), benchmark);
+    }
+    measures
 }
 
 /// Where benchmarks ran, as people read it.
@@ -542,7 +553,7 @@ pub(super) fn environment(time: std::time::Duration) -> Value {
 }
 
 /// The model of the processor, as the system names it.
-fn cpu() -> String {
+pub(super) fn cpu() -> String {
     #[cfg(target_os = "linux")]
     {
         let info = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
@@ -709,7 +720,7 @@ pub(super) fn changed_for<'a>(
 ) -> Option<&'a [crate::driver::ChangedCode]> {
     let base = baselines.measures.get(&(test.to_string(), benchmark.name.clone()))?;
     let moved = match (benchmark.instructions, base.instructions) {
-        (Some(now), Some(was)) if was > 0.0 => ((now - was) / was).abs() >= 0.005,
+        (Some(now), Some(was)) if was > 0.0 => ((now - was) / was).abs() >= MOVED,
         _ => compare(benchmark, base, None, false).verdict != "same",
     };
     if !moved || baselines.code.is_empty() {

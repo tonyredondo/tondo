@@ -22,6 +22,7 @@ mod junit;
 mod orders;
 mod owners;
 mod select;
+pub mod series;
 mod store;
 mod worker;
 

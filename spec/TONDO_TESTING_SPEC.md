@@ -6,7 +6,8 @@
 - **Formatos de tooling:** `tondo-test-report-0.1/1`,
   `tondo-test-list-0.1/1`, `tondo-test-events-0.1/1`,
   `tondo-junit-report-0.1/1`, `tondo-coverage-0.1/1`,
-  `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/2`.
+  `tondo-test-artifacts-0.1/1`, `tondo-snapshot-store-0.1/2` y
+  `tondo-series-0.1/1`.
 
 Esta especificación añade a Tondo las declaraciones `suite` y `test` y define
 cómo el toolchain descubre, compila, ejecuta y reporta árboles estáticos de
@@ -2256,7 +2257,8 @@ tondo test [<project>... | --project <dir>]
            [--report <json|junit|coverage|lcov|markdown|html>=<path>]...
            [--coverage]
            [--bench [--bench-time <seconds>] [--save-baseline <name|path>]
-                    [--baseline <name|path> | --against <revision> | --compiler <tondo|revision>]
+                    [--baseline <name|path> | --against <revision> | --compiler <tondo|revision>
+                     | --series <base>..<head> [--fresh]]
                     [--max-regression <percent> [--regression-by <time|instructions>]]
                     [--layouts <n>]]
            [--profile <cpu|instructions|memory>]
@@ -2664,6 +2666,37 @@ benchmark se juzga así entre los dos, en una sola ejecución. No admite
 ~~~text
   collatz 10000   879.1 µs/op  ±0.5%  0 allocs/op  0 B/op  7.43M ins/op  3 layouts 879.1 µs–1.126 ms
 ~~~
+
+`--series <base>..<head>` mide los benchmarks con el `tondo` de cada
+revisión de base a head, por los primeros padres de head, que cambia lo que
+lee una construcción release de tondo: sus fuentes y lo que embeben, sus
+dependencias y su toolchain, no sus tests. Un commit que no lo cambia es el
+`tondo` de su padre, y lo dice sin construirlo ni medirlo. Cada `tondo` lo
+construye `tondo compiler` (7.19 del toolchain), que solo toma uno con el
+registro de su construcción; si uno no se construye, no se mide nada, y dos
+revisiones seguidas que dan los mismos bytes se miden una vez. Todos miden
+las mismas fuentes, los proyectos tal como están donde se ejecuta. Primero
+ejecuta un benchmark de cada proyecto con cada `tondo`, y no mide nada más si
+uno falla. Mide cada revisión una vez y guarda la medida bajo el sha256 de
+su `tondo`, el de las fuentes medidas, las opciones que cambian la medida,
+las variables `TONDO_*` del entorno y la máquina: el procesador, la versión
+del kernel y la de la biblioteca de C; otra serie con lo mismo la toma de la
+caché y dice desde cuándo, y `--fresh` lo mide todo otra vez. De cada commit
+dice los benchmarks que movió frente al anterior, por sus instrucciones, en
+medio por ciento o más, y por sus asignaciones y sus bytes por ejecución, que
+son exactos, con sus dos tiempos sin veredicto, pues una ejecución de cada
+lado dice poco del tiempo; y el tamaño del ejecutable de los tests de cada
+proyecto, donde corren sus benchmarks, cuando cambió. Luego mide head frente
+a base por turnos, como `--compiler`, con
+`--layouts`, `--max-regression`, `--regression-by` y `--baseline`, que solo
+toma esa comparación, y atribuye cada benchmark que empeoró al commit cuyo
+paso más lo hizo crecer, o dice que ninguno lo hizo y que lo movió dónde
+cae su código. Un benchmark cuyo test falla con una revisión no tiene medida
+allí: la serie sigue, los pasos de cada lado lo dicen y la invocación falla
+al final nombrando el test y la revisión. Cada resultado nombra las
+revisiones y los sha256 que compara; con `--json` da `tondo-series-0.1/1`.
+No admite `--compiler`, `--against`, `--save-baseline`, `--report` ni
+`--watch`.
 
 ### 10.5 Perfiles
 
@@ -4604,6 +4637,47 @@ store, desde la raíz del paquete, o `null` para una semilla, cuyo índice da
 `seed`; y con `--fuzz`, en `reduced_from`, los bytes de la entrada antes de
 reducirla, y `reduction_timed_out`, `true` si los 30 segundos de la reducción
 terminaron antes de llegar a la más simple y `false` si no.
+
+### 15.16 Series de compiladores
+
+`--series` con `--json` escribe `tondo-series-0.1/1` en la salida estándar,
+en una línea, y lo que dice para personas en la de errores, con la salida de
+la comparación del conjunto. `revisions` da cada revisión de base a head, con
+el sha256 de su `tondo`, si cambia lo que se construye y, por proyecto, cuándo
+se midió (segundos desde 1970) y si ahora (`now`) o en la caché. `steps` da
+cada commit que cambia su `tondo` frente al anterior: los benchmarks que movió,
+con sus instrucciones, asignaciones, bytes y la mediana de su tiempo antes y
+después, y los tamaños. `whole` da el reporte JSON de la comparación del
+conjunto por proyecto (15.1), `regressions` cada benchmark que empeoró en él
+con el commit al que se atribuye, o `null`, y `failed` los tests que fallaron
+con alguna revisión:
+
+~~~json
+{
+  "format": "tondo-series-0.1/1",
+  "series": {
+    "base": "29acb3af…",
+    "head": "b5530f8b…",
+    "sources": [{"project": "bench/tondo", "sha256": "…"}],
+    "revisions": [
+      {"revision": "29acb3af…", "subject": "…", "sha256": "0d1b0461…", "changes": true,
+       "measured": [{"at": 1795700000, "now": true}]}
+    ],
+    "steps": [
+      {"revision": "e3766ff9…", "parent": "29acb3af…", "sha256": "…", "parent_sha256": "0d1b0461…",
+       "rows": [{"project": "bench/tondo", "test": "bench::unit::bench::texts", "name": "chars ascii",
+                 "before": {"instructions_per_op": 9995.0, "allocations_per_op": 0.0,
+                            "bytes_per_op": 0.0, "ns_per_op": 460.4},
+                 "after": {"instructions_per_op": 10012.0, "allocations_per_op": 0.0,
+                           "bytes_per_op": 0.0, "ns_per_op": 458.7}}],
+       "sizes": [{"project": "bench/tondo", "before": 14713400, "after": 14745216}]}
+    ],
+    "whole": [{"project": "bench/tondo", "report": {"format": "tondo-test-report-0.1/1"}}],
+    "regressions": [{"project": "bench/tondo", "test": "…", "name": "…", "commit": "e3766ff9…"}],
+    "failed": []
+  }
+}
+~~~
 
 ## 16. Conformidad
 

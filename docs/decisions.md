@@ -10431,3 +10431,36 @@ slower, the profiler example by 6.3% with level instructions; 7 rows of
 examples' executables 0.22% larger. It goes in for the spread, which is
 what a measure of a change can trust, and the order above needs it.
 `a_release_loop_starts_on_32_bytes` holds a loop's jump back on 32 bytes.
+
+## A series measures each commit with its own tondo
+
+Piece 1 of pull request 51 was measured commit by commit by hand, over a
+night, and three of its revisions turned out to be one executable that
+nobody had checked. `tondo test <projects> --bench --series <base>..<head>`
+does it in one command, in the shape the maintainer approved. Each commit
+from base to head along head's first parents that changes what a release
+build of tondo reads gets its `tondo` from `tondo compiler`, with the record
+of its build; a commit that changes none of it is its parent's `tondo`, said
+and not built, and two revisions that give the same bytes are measured
+once. A build that fails stops the series before it measures, and so does
+one benchmark of each project run first with every `tondo`. Every `tondo`
+measures the same sources, the projects where the command runs, once: the
+measure is kept under the `tondo`'s sha256, the sources' sha256, the
+options, the environment's `TONDO_*` and the machine (processor, kernel,
+C library), and a series run again takes it from there and says since
+when. A step says the benchmarks that moved against the commit before, by
+their instructions, half a percent or more, and their allocations and
+bytes, which repeat from run to run, with their two times and no verdict;
+and the size of the tests' executable. The whole, head against base in
+turns with `--layouts`, judges the time, and each benchmark it calls
+regressed is put down to the step that made it grow most, or to none,
+when where its code lies moved it. A test that fails with a revision
+leaves its benchmarks without a measure there and fails the series at its
+end, naming it.
+
+Run on 4b90a0f6..7fe55201 over bench/tondo's arrays, both `tondo`s built
+fresh: `map filter sum 10000` 353.5k to 323.5k instructions (-8.5%) at
+the divisibility by an inverse; run again, both measures were kept. The
+Nightly runs it twice over the last change to the compiler, the second
+run taking every measure from the cache. Left out until asked: the MCP
+server's `test` tool, and the compile times of each step.

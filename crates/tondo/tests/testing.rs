@@ -2637,6 +2637,11 @@ test fibonacci {
         (vec!["test", "--bench", "--max-regression", "5"], "--max-regression compares with a baseline"),
         (vec!["test", "--bench", "--against", "HEAD", "--compiler", "tondo"], "choose one"),
         (vec!["test", "--bench", "--against", "nowhere"], "git knows no revision nowhere"),
+        (vec!["test", "--series", "HEAD..HEAD"], "--series is about benchmarks: it goes with --bench"),
+        (vec!["test", "--bench", "--fresh"], "--fresh measures a series again: it goes with --series"),
+        (vec!["test", "--bench", "--series", "HEAD..HEAD", "--compiler", "tondo"], "it does not go with --compiler"),
+        (vec!["test", "--bench", "--series", "HEAD"], "--series takes <base>..<head>"),
+        (vec!["test", "--bench", "--series", "nowhere..HEAD"], "nowhere is no revision of"),
     ] {
         let (_, stderr, status) = tondo(&dir, &args);
         assert_ne!(status, 0);

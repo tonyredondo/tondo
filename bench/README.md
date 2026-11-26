@@ -77,6 +77,13 @@ hours goes so:
   over `bench/tondo` then names the functions it changed; "the same code"
   with two executables is a change of where code lies or of the runtime.
 - Each result starts with both sides' revisions and sha256s.
+- A range of commits is measured with `tondo test <projects> --bench
+  --series <base>..<head>`: the `tondo` of each commit that changes the
+  compiler, each step against the one before by its instructions,
+  allocations and bytes, which repeat, and the whole in turns, with
+  `--layouts`. Each measure is kept under what decides it, the `tondo`'s
+  sha256, the sources, the options, `TONDO_*` and the machine, so a range
+  measured again measures only what is new.
 
 This table was measured on an AMD Ryzen 9 5950X, Linux, with go1.27.4 (mise's,
 first on `PATH`), on 2026-11-26 at b5530f8b, in an environment of 55

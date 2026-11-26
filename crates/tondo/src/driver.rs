@@ -1568,6 +1568,21 @@ pub fn revision(path: &Path, reference: &str) -> Result<(String, PathBuf), Strin
     Ok((commit, tree.join(within)))
 }
 
+/// What a release build of tondo reads in its repository, as git's
+/// pathspecs from its root: its sources and the files they embed, its
+/// dependencies and its toolchain, not its tests. A commit that changes
+/// none of them builds its parent's `tondo`. The Nightly's scripts
+/// compiler-identity.sh and series.sh name the same.
+pub const TONDO_SOURCES: [&str; 7] = [
+    "crates",
+    "vendor",
+    "conformance",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ":(exclude)crates/tondo/tests",
+];
+
 /// A `tondo` to compare with (toolchain 7.19): an executable, as given, or
 /// a revision of tondo's own repository, where `near` is, built once in
 /// release and kept in the cache. What names it, its commit or its path,
