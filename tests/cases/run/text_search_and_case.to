@@ -1,0 +1,31 @@
+// A text's searches work on its bytes and answer in characters: `replace`
+// with one byte, several or none, and a text with no match given back as it
+// is; `count`, `findLast` and `find` on characters of several bytes. Case
+// changes outside ASCII follow Unicode, the lowercase of `Σ` by its place in
+// a word, and `urlEncode` writes each byte outside RFC 3986's unreserved
+// characters as `%XX` (standard library 4, 14.9).
+import std.console
+import std.encoding
+
+fn main() {
+    let text = "añb·añb·añ"
+    console.println(
+        "{text.replace("añ", "x")} {text.replace("·", "--")} {text.replace("z", "y")} {"ab".replace("", "-")}",
+    )
+    console.println("{text.count("añ")} {text.count("·")} {text.count("")} {text.count("q")}")
+    console.println(
+        "{text.findLast("añ")} {text.findLast("·")} {text.findLast("")} {text.findLast("q")}",
+    )
+    console.println("{text.find("b·")} {text.find("·a")} {text.find("")}")
+    console.println(
+        "{"straße ǅ ﬁ".toUpper()} {"ΟΔΟΣ Σ ΣΑ".toLower()} {"İI Ǆ ÀÉ".toLower()} {"abc ñ".toUpper()}",
+    )
+    console.println("{encoding.urlEncode("plain-text_~.")} {encoding.urlEncode("a b/ñ")}")
+}
+
+// expect-stdout: xb·xb·x añb--añb--añ añb·añb·añ -a-b-
+// expect-stdout: 3 2 11 0
+// expect-stdout: some(8) some(7) some(10) none
+// expect-stdout: some(2) some(3) some(0)
+// expect-stdout: STRASSE Ǆ FI οδος σ σα i̇i ǆ àé ABC Ñ
+// expect-stdout: plain-text_~. a%20b%2F%C3%B1

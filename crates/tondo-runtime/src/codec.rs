@@ -148,12 +148,19 @@ pub unsafe extern "C" fn tondo_rt_html_unescape(input: *const Str, region: *mut 
 /// RFC 3986: letters, digits, `-`, `.`, `_` and `~`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_url_encode(input: *const Str, region: *mut Region) -> *mut Str {
-    let mut out = Vec::new();
-    for &b in text(&input) {
-        if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let bytes = text(&input);
+    let plain = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~');
+    let Some(first) = bytes.iter().position(|&b| !plain(b)) else {
+        return str_in(region, bytes);
+    };
+    let mut out = Vec::with_capacity(bytes.len() + 8);
+    out.extend_from_slice(&bytes[..first]);
+    for &b in &bytes[first..] {
+        if plain(b) {
             out.push(b);
         } else {
-            out.extend_from_slice(format!("%{b:02X}").as_bytes());
+            out.extend_from_slice(&[b'%', HEX[(b >> 4) as usize], HEX[(b & 0x0f) as usize]]);
         }
     }
     str_in(region, &out)
