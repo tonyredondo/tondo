@@ -10446,7 +10446,8 @@ once. A build that fails stops the series before it measures, and so does
 one benchmark of each project run first with every `tondo`. Every `tondo`
 measures the same sources, the projects where the command runs, once: the
 measure is kept under the `tondo`'s sha256, the sources' sha256, the
-options, the environment's `TONDO_*` and the machine (processor, kernel,
+options, the environment's `TONDO_*` and how many variables it has, as a
+start of a program copies them all, and the machine (processor, kernel,
 C library), and a series run again takes it from there and says since
 when. Only a measure whose tests all passed is kept: one that failed for
 a reason of the moment would otherwise fail every later series over that

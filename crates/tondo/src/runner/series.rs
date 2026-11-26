@@ -133,10 +133,12 @@ pub fn run(series: &Series) -> Result<ExitCode, String> {
     for project in &series.projects {
         sources.push(sources_hash(project)?);
     }
+    let environment = environment();
     say(format!(
-        "measuring {} as they are here, sources {}",
+        "measuring {} as they are here, sources {}, in an environment of {} variables",
         names(&series.projects),
-        &sha256_hex(sources.join(" ").as_bytes())[..16]
+        &sha256_hex(sources.join(" ").as_bytes())[..16],
+        environment.count
     ));
 
     // One benchmark of each project with every tondo, before the long run.
@@ -151,7 +153,6 @@ pub fn run(series: &Series) -> Result<ExitCode, String> {
 
     // Every tondo measures every project once, or the cache keeps it.
     let machine = machine();
-    let environment = environment();
     let mut measures: Vec<Vec<Measure>> = Vec::new();
     for tondo in &tondos {
         let mut row = Vec::new();
@@ -281,6 +282,7 @@ pub fn run(series: &Series) -> Result<ExitCode, String> {
             "series": {
                 "base": revisions[0].commit,
                 "head": revisions[revisions.len() - 1].commit,
+                "variables": environment.count,
                 "sources": series.projects.iter().zip(&sources)
                     .map(|(p, s)| json!({ "project": p.display().to_string(), "sha256": s }))
                     .collect::<Vec<_>>(),
@@ -352,19 +354,21 @@ fn revisions(root: &Path, base: &str, head: &str) -> Result<Vec<Revision>, Strin
 
 /// What decides a measure: the `tondo`'s bytes, the sources measured, the
 /// options that change what is measured, the environment's `TONDO_*` and
+/// how many variables it has, as a start of a program copies them all, and
 /// the machine. Two measures with one key measure the same thing.
 fn key(
     sha256: &str,
     project: &str,
     sources: &str,
     measuring: &[String],
-    environment: &[(String, String)],
+    environment: &Environment,
     machine: &str,
 ) -> String {
     let mut text = format!("tondo {sha256}\nproject {project} {sources}\noptions {}\n", measuring.join(" "));
-    for (name, value) in environment {
+    for (name, value) in &environment.tondo {
         text.push_str(&format!("env {name}={value}\n"));
     }
+    text.push_str(&format!("variables {}\n", environment.count));
     text.push_str(&format!("machine {machine}\n"));
     sha256_hex(text.as_bytes())
 }
@@ -384,11 +388,19 @@ fn sources_hash(project: &Path) -> Result<String, String> {
     Ok(sha256_hex(&text))
 }
 
-/// The environment's variables that a `tondo` reads, `TONDO_*`, by name.
-fn environment() -> Vec<(String, String)> {
-    let mut found: Vec<_> = std::env::vars().filter(|(name, _)| name.starts_with("TONDO_")).collect();
-    found.sort();
-    found
+/// What of the environment decides a measure: the variables a `tondo`
+/// reads, `TONDO_*`, by name, and how many there are, which the benchmarks
+/// that start a program depend on. Not their bytes, which every shell's `_`
+/// and `OLDPWD` would change at each run.
+struct Environment {
+    tondo: Vec<(String, String)>,
+    count: usize,
+}
+
+fn environment() -> Environment {
+    let mut tondo: Vec<_> = std::env::vars().filter(|(name, _)| name.starts_with("TONDO_")).collect();
+    tondo.sort();
+    Environment { tondo, count: std::env::vars_os().count() }
 }
 
 /// The processor, the kernel's release and the C library's version.
@@ -899,9 +911,10 @@ mod tests {
 
     #[test]
     fn every_part_of_a_measure_s_key_changes_it() {
-        let environment = vec![("TONDO_WORKERS".to_string(), "4".to_string())];
+        let tondo = vec![("TONDO_WORKERS".to_string(), "4".to_string())];
+        let environment = Environment { tondo: tondo.clone(), count: 55 };
         let options = vec!["--filter".to_string(), "texts".to_string()];
-        let key = |sha: &str, sources: &str, options: &[String], environment: &[(String, String)], machine: &str| {
+        let key = |sha: &str, sources: &str, options: &[String], environment: &Environment, machine: &str| {
             super::key(sha, "bench/tondo", sources, options, environment, machine)
         };
         let first = key("aa", "s1", &options, &environment, "m1");
@@ -909,7 +922,10 @@ mod tests {
         assert_ne!(first, key("ab", "s1", &options, &environment, "m1"), "the tondo");
         assert_ne!(first, key("aa", "s2", &options, &environment, "m1"), "the sources");
         assert_ne!(first, key("aa", "s1", &options[..1], &environment, "m1"), "the options");
-        assert_ne!(first, key("aa", "s1", &options, &[], "m1"), "the environment");
+        let none = Environment { tondo: Vec::new(), count: 55 };
+        assert_ne!(first, key("aa", "s1", &options, &none, "m1"), "the TONDO_* variables");
+        let more = Environment { tondo, count: 200 };
+        assert_ne!(first, key("aa", "s1", &options, &more, "m1"), "how many variables");
         assert_ne!(first, key("aa", "s1", &options, &environment, "m2"), "the machine");
         assert_ne!(first, super::key("aa", "examples/chat", "s1", &options, &environment, "m1"), "the project");
     }
