@@ -10455,8 +10455,9 @@ their instructions, half a percent or more, and their allocations and
 bytes, which repeat from run to run, with their two times and no verdict;
 and the size of the tests' executable. The whole, head against base in
 turns with `--layouts`, judges the time, and each benchmark it calls
-regressed is put down to the step that made it grow most, or to none,
-when where its code lies moved it. A test that fails with a revision
+regressed is put down to the step that grew most what it regressed by,
+its allocations, its bytes, or its instructions for its time, or to
+none, when where its code lies moved it. A test that fails with a revision
 leaves its benchmarks without a measure there and fails the series at its
 end, naming it.
 

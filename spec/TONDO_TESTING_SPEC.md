@@ -2691,13 +2691,14 @@ y el tamaño del ejecutable de los tests de cada proyecto, donde corren sus
 benchmarks, cuando cambió. Luego mide head frente a base por turnos, como
 `--compiler`, con `--layouts`, `--max-regression`, `--regression-by` y
 `--baseline`, que solo toma esa comparación, y atribuye cada benchmark que
-empeoró al commit cuyo paso más lo hizo crecer, o dice que ninguno lo hizo y
-que lo movió dónde cae su código. Un benchmark cuyo test falla con una
-revisión no tiene medida allí: la serie sigue, los pasos de cada lado lo
-dicen y la invocación falla al final nombrando el test y la revisión. Cada
-resultado nombra las revisiones y los sha256 que compara; con `--json` da
-`tondo-series-0.1/1`. No admite `--compiler`, `--against`,
-`--save-baseline`, `--report` ni `--watch`.
+empeoró al commit cuyo paso más hizo crecer lo que empeoró: sus
+asignaciones, sus bytes o sus instrucciones, que juzgan también el tiempo; o
+dice que ninguno lo hizo y que lo movió dónde cae su código. Un benchmark
+cuyo test falla con una revisión no tiene medida allí: la serie sigue, los
+pasos de cada lado lo dicen y la invocación falla al final nombrando el test
+y la revisión. Cada resultado nombra las revisiones y los sha256 que
+compara; con `--json` da `tondo-series-0.1/1`. No admite `--compiler`,
+`--against`, `--save-baseline`, `--report` ni `--watch`.
 
 ### 10.5 Perfiles
 

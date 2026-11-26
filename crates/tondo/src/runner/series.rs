@@ -258,12 +258,12 @@ pub fn run(series: &Series) -> Result<ExitCode, String> {
     // most the same way.
     let mut regressions = Vec::new();
     for (project, report) in &whole {
-        for (test, name) in regressed(report) {
+        for (test, name, by) in regressed(report) {
             let moved = steps.iter().map(|(index, _, _, moved, _)| (*index, moved.as_slice()));
-            let commit = put_down(moved, project, &test, &name).map(|index| revisions[index].commit.clone());
+            let commit = put_down(moved, project, &test, &name, by).map(|index| revisions[index].commit.clone());
             say(match &commit {
                 Some(commit) => format!("regressed: {project}: {test} {name}, by {}", short(commit)),
-                None => format!("regressed: {project}: {test} {name}, by no step's count: where its code lies"),
+                None => format!("regressed: {project}: {test} {name}, by no step's count of it: where its code lies"),
             });
             regressions.push(json!({ "project": project, "test": test, "name": name, "commit": commit }));
         }
@@ -652,35 +652,40 @@ fn moved_between(
     found
 }
 
-/// The step that made a benchmark grow the most, by its index among the
-/// revisions: what a regression of the whole is put down to, from each
-/// revision's own measure.
+/// The step that made a benchmark grow the most by what it regressed by,
+/// by its index among the revisions: what a regression of the whole is put
+/// down to, from each revision's own measure.
 fn put_down<'a>(
     steps: impl Iterator<Item = (usize, &'a [Moved])>,
     project: &str,
     test: &str,
     name: &str,
+    by: Grew,
 ) -> Option<usize> {
     steps
         .filter_map(|(index, moved)| {
             let row = moved.iter().find(|m| m.project == project && m.test == test && m.name == name)?;
-            let rise = rise(&row.before, &row.after);
+            let rise = rise(&row.before, &row.after, by);
             (rise > 0.0).then_some((index, rise))
         })
         .max_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(index, _)| index)
 }
 
-/// How much a benchmark grew at a step, by its instructions, or by its
-/// allocations and bytes where it ran as many.
-fn rise(before: &Benchmark, after: &Benchmark) -> f64 {
-    match (after.instructions, before.instructions) {
-        (Some(now), Some(was)) if was > 0.0 && now != was => now / was - 1.0,
-        _ if before.allocations > 0.0 && after.allocations != before.allocations => {
-            after.allocations / before.allocations - 1.0
-        }
-        _ if before.bytes > 0.0 => after.bytes / before.bytes - 1.0,
-        _ => 0.0,
+/// How much a benchmark's count grew at a step, as a fraction of what it
+/// was, or by what it now has where it had none.
+fn rise(before: &Benchmark, after: &Benchmark, by: Grew) -> f64 {
+    let grown = |now: f64, was: f64| match was > 0.0 {
+        true => now / was - 1.0,
+        false => now,
+    };
+    match by {
+        Grew::Instructions | Grew::Time => match (after.instructions, before.instructions) {
+            (Some(now), Some(was)) => grown(now, was),
+            _ => grown(bench::stats(&after.samples).median, bench::stats(&before.samples).median),
+        },
+        Grew::Allocations => grown(after.allocations, before.allocations),
+        Grew::Bytes => grown(after.bytes, before.bytes),
     }
 }
 
@@ -752,21 +757,52 @@ fn compare_whole(head: &Tondo, base: &Tondo, project: &Path, series: &Series) ->
     Ok((ran.success(), read.unwrap_or(Value::Null)))
 }
 
-/// The benchmarks a whole's report says regressed, by test and name.
-fn regressed(report: &Value) -> Vec<(String, String)> {
+/// What a benchmark regressed by, as the whole's report says why: the step
+/// it is put down to is the one that grew the same count most.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Grew {
+    Instructions,
+    /// Slower by the clock, which a step's one run cannot judge: its
+    /// instructions stand for it.
+    Time,
+    Allocations,
+    Bytes,
+}
+
+/// The kind of a reason the report gives (testing 10.4): "211.04 allocs/op,
+/// was 111.05", "11856.32 B/op, was 8266.38", "3.4% more instructions",
+/// "12.5% slower", or that the instructions were not counted.
+fn grew(reason: &str) -> Grew {
+    if reason.contains("allocs/op") {
+        Grew::Allocations
+    } else if reason.contains("B/op") {
+        Grew::Bytes
+    } else if reason.contains("slower") {
+        Grew::Time
+    } else {
+        Grew::Instructions
+    }
+}
+
+/// The benchmarks a whole's report says regressed, by test and name, with
+/// what they regressed by: against the other tondo, or against the saved
+/// baseline, which judges instructions.
+fn regressed(report: &Value) -> Vec<(String, String, Grew)> {
     let mut found = Vec::new();
     for test in report["tests"].as_array().into_iter().flatten() {
         let id = test["id"].as_str().unwrap_or_default();
         let attempts = test["attempts"].as_array().into_iter().flatten();
         for benchmark in attempts.flat_map(|a| a["benchmarks"].as_array().into_iter().flatten()) {
-            let over = !benchmark["baseline"]["regressed"].is_null() || benchmark["since"]["regressed"] == true;
-            if over && let Some(name) = benchmark["name"].as_str() {
-                found.push((id.to_string(), name.to_string()));
+            let Some(name) = benchmark["name"].as_str() else { continue };
+            if let Some(reason) = benchmark["baseline"]["regressed"].as_str() {
+                found.push((id.to_string(), name.to_string(), grew(reason)));
+            } else if benchmark["since"]["regressed"] == true {
+                found.push((id.to_string(), name.to_string(), Grew::Instructions));
             }
         }
     }
-    found.sort();
-    found.dedup();
+    found.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    found.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
     found
 }
 
@@ -914,10 +950,36 @@ mod tests {
         };
         let (one, two, three) = (vec![row(100.0, 102.0)], vec![row(102.0, 101.0)], vec![row(101.0, 109.0)]);
         let steps = [(1, one.as_slice()), (2, two.as_slice()), (3, three.as_slice())];
-        assert_eq!(put_down(steps.iter().copied(), "p", "t", "row"), Some(3));
-        assert_eq!(put_down(steps[..2].iter().copied(), "p", "t", "row"), Some(1));
-        assert_eq!(put_down(steps[1..2].iter().copied(), "p", "t", "row"), None, "it only fell");
-        assert_eq!(put_down(steps.iter().copied(), "p", "t", "other"), None);
+        let by = Grew::Instructions;
+        assert_eq!(put_down(steps.iter().copied(), "p", "t", "row", by), Some(3));
+        assert_eq!(put_down(steps[..2].iter().copied(), "p", "t", "row", by), Some(1));
+        assert_eq!(put_down(steps[1..2].iter().copied(), "p", "t", "row", by), None, "it only fell");
+        assert_eq!(put_down(steps.iter().copied(), "p", "t", "other", by), None);
+    }
+
+    #[test]
+    fn a_regression_is_put_down_by_the_count_it_regressed_by() {
+        // The allocations rise at the second step and the instructions at
+        // the first: each kind names its own step.
+        let row = |before: Benchmark, after: Benchmark| Moved {
+            project: "p".to_string(),
+            test: "t".to_string(),
+            name: "row".to_string(),
+            before,
+            after,
+        };
+        let one = vec![row(measured(100.0, 111.0, 800.0), measured(101.0, 111.0, 800.0))];
+        let two = vec![row(measured(101.0, 111.0, 800.0), measured(84.0, 211.0, 1100.0))];
+        let steps = [(1, one.as_slice()), (2, two.as_slice())];
+        let named = |by| put_down(steps.iter().copied(), "p", "t", "row", by);
+        assert_eq!(named(Grew::Allocations), Some(2));
+        assert_eq!(named(Grew::Bytes), Some(2));
+        assert_eq!(named(Grew::Instructions), Some(1));
+        assert_eq!(named(Grew::Time), Some(1));
+        assert_eq!(grew("211.04 allocs/op, was 111.05"), Grew::Allocations);
+        assert_eq!(grew("11856.32 B/op, was 8266.38"), Grew::Bytes);
+        assert_eq!(grew("3.4% more instructions"), Grew::Instructions);
+        assert_eq!(grew("12.5% slower"), Grew::Time);
     }
 
     /// A stand-in for a tondo, as a script: `test` saves a baseline of one
