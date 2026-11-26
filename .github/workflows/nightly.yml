@@ -249,6 +249,11 @@ jobs:
       - name: A revision's compiler is its own
         if: ${{ !cancelled() }}
         run: sh .github/scripts/compiler-identity.sh target/release/tondo
+      # `tondo test --bench --series` over the last change to the compiler,
+      # measured, then kept: its report names every revision's sha256.
+      - name: A series measures each commit with its own tondo
+        if: ${{ !cancelled() }}
+        run: sh .github/scripts/series.sh target/release/tondo
 
   # The parsers of the standard library, searched for inputs that fail
   # (docs/refactor.md, 0.6). What fails stays in testing/fuzz/fuzz, to
