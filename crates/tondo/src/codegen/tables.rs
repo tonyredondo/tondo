@@ -192,13 +192,22 @@ impl Codegen<'_> {
     pub(super) fn dump_table(&mut self, id: DataId) {
         let (mut text, mut glues) = (crate::cores::BINDINGS.to_string(), Vec::new());
         let (mut shapes, mut known) = (Vec::new(), HashMap::new());
-        let bound =
-            self.traced.iter().filter_map(|function| self.dump_bindings.get(&(function.body, function.version)));
+        // The functions in the order they were declared, each by its number
+        // in the trace table, which is the order they lie in: alike ones
+        // side by side, as the copies of a generic function are, so that
+        // the table deflates as fast as it did before the callers' order.
+        let mut declared: Vec<usize> = (0..self.traced.len()).collect();
+        declared.sort_by_key(|&index| self.traced[index].id.as_u32());
+        let bound = declared.iter().filter_map(|&index| {
+            let function = &self.traced[index];
+            self.dump_bindings.get(&(function.body, function.version))
+        });
         let shaped: Vec<Ty> = bound.flatten().map(|binding| binding.1).collect();
         for ty in shaped {
             self.shape(ty, &mut shapes, &mut known);
         }
-        for (index, function) in self.traced.iter().enumerate() {
+        for index in declared {
+            let function = &self.traced[index];
             text.push_str(&format!("F\t{index}\n"));
             for (register, at) in &function.saved {
                 text.push_str(&format!("C\t{register}\t{at}\n"));
