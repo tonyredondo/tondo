@@ -429,6 +429,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut fuzzing = false;
     let (mut save, mut baseline, mut against) = (None, None, None);
     let mut compiler: Option<String> = None;
+    let mut same = false;
     let mut layouts = 1u64;
     let (mut statically, mut debug, mut library, mut watch) = (false, false, false, false);
     let mut target = None;
@@ -529,6 +530,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--baseline" => baseline = Some(value()?),
             "--against" => against = Some(value()?),
             "--compiler" => compiler = Some(value()?),
+            "--same" => same = true,
             "--max-regression" => {
                 let percent = value()?
                     .trim_end_matches('%')
@@ -908,7 +910,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         options.baseline = Some(runner::Baseline::Revision(revision_tests(&path, &reference, &build)?));
     }
     if let Some(reference) = compiler {
-        options.baseline = Some(compiler_baseline(&reference, &path, args)?);
+        options.baseline = Some(compiler_baseline(&reference, &path, args, same)?);
     }
     // The same tests counting the regions their functions set up, which
     // the build that measures does not pay for; not for another tondo's
@@ -1012,8 +1014,14 @@ fn baseline_path(project: &Path, name: &str) -> Result<PathBuf, String> {
 /// What another `tondo` measures of the same benchmarks, for `--compiler`
 /// (testing 10.4): it runs them as asked, saving a baseline, which these
 /// are compared with.
-fn compiler_baseline(reference: &str, path: &Path, args: &[OsString]) -> Result<tondo::runner::Baseline, String> {
-    let (name, executable) = driver::compiler(reference, path)?;
+fn compiler_baseline(
+    reference: &str,
+    path: &Path,
+    args: &[OsString],
+    same: bool,
+) -> Result<tondo::runner::Baseline, String> {
+    let compared = driver::against_compiler(reference, path, same)?;
+    let (name, executable) = (compared.revision.clone(), compared.executable.clone());
     let saved = driver::cache_dir().join(format!("compiler-baseline-{}.json", std::process::id()));
     // The same tests and measures, but what compares, reports or writes.
     const OURS: [&str; 9] = [
@@ -1032,7 +1040,7 @@ fn compiler_baseline(reference: &str, path: &Path, args: &[OsString]) -> Result<
     while let Some(arg) = given.next() {
         if OURS.iter().any(|flag| arg == *flag) {
             given.next();
-        } else if arg != "--json" {
+        } else if arg != "--json" && arg != "--same" {
             forwarded.push(arg.clone());
         }
     }
@@ -1056,7 +1064,8 @@ fn compiler_baseline(reference: &str, path: &Path, args: &[OsString]) -> Result<
         eprintln!("tondo: cannot tell what code changed: {why}");
         Vec::new()
     });
-    Ok(tondo::runner::Baseline::Compiler { name: reference.to_string(), commit, saved, code })
+    let (sha256, ours) = (compared.sha256, compared.ours);
+    Ok(tondo::runner::Baseline::Compiler { name: reference.to_string(), commit, sha256, ours, saved, code })
 }
 
 /// The tests of the project as a git revision has it, for `--against`
@@ -2299,6 +2308,7 @@ fn graph_command(args: &[OsString]) -> Result<ExitCode, String> {
 fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut args = args.to_vec();
     let (json, tests) = (take_flag(&mut args, "--json"), take_flag(&mut args, "--tests"));
+    let same = take_flag(&mut args, "--same");
     let mut valued = |flag: &str| -> Result<Option<String>, String> {
         let Some(at) = args.iter().position(|a| a == flag) else { return Ok(None) };
         let value = args.get(at + 1).and_then(|v| v.to_str()).filter(|v| !v.starts_with('-')).map(str::to_string);
@@ -2327,7 +2337,8 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Err(format!("optimizations takes one project or file\n{USAGE}"));
     }
     if let Some(reference) = compiler {
-        let (compiler, executable) = driver::compiler(&reference, &path)?;
+        let compared = driver::against_compiler(&reference, &path, same)?;
+        let (compiler, executable) = (compared.revision.clone(), compared.executable.clone());
         let (gone, new) =
             driver::optimizations_compiler(&path, &executable, function.as_deref(), kind.as_deref(), tests)?;
         if json {
@@ -2335,7 +2346,12 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
             print_json(
                 "optimizations",
                 true,
-                serde_json::json!({ "compiler": compiler, "gone": list(&gone), "new": list(&new) }),
+                serde_json::json!({
+                    "compiler": compiler,
+                    "compared": compared.json(),
+                    "gone": list(&gone),
+                    "new": list(&new),
+                }),
             );
             return Ok(ExitCode::SUCCESS);
         }
@@ -2471,6 +2487,7 @@ fn compiler_command(args: &[OsString]) -> Result<ExitCode, String> {
 fn runtime_asm(
     args: &[OsString],
     compiler: Option<String>,
+    same: bool,
     json: bool,
     all: bool,
     other: bool,
@@ -2490,12 +2507,18 @@ fn runtime_asm(
         ));
     }
     if let Some(reference) = compiler {
-        let (compiler, executable) = driver::compiler(&reference, Path::new("."))?;
+        let compared = driver::against_compiler(&reference, Path::new("."), same)?;
+        let (compiler, executable) = (compared.revision.clone(), compared.executable.clone());
         let (changes, same) = driver::runtime_assembly_compiler(&executable, function.as_deref())?;
         if json {
             let changes: Vec<serde_json::Value> =
                 changes.iter().map(|(name, lines)| serde_json::json!({ "function": name, "diff": lines })).collect();
-            print_json("asm", true, serde_json::json!({ "compiler": compiler, "changes": changes, "same": same }));
+            let compared = compared.json();
+            print_json(
+                "asm",
+                true,
+                serde_json::json!({ "compiler": compiler, "compared": compared, "changes": changes, "same": same }),
+            );
         } else {
             print!(
                 "{}",
@@ -2529,6 +2552,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (rules, tests) = (take_flag(&mut args, "--rules"), take_flag(&mut args, "--tests"));
     let runtime = take_flag(&mut args, "--runtime");
     let reached = take_flag(&mut args, "--reached");
+    let same = take_flag(&mut args, "--same");
     if take_flag(&mut args, "--no-logpoints") {
         driver::set_no_logpoints();
     }
@@ -2556,7 +2580,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Err(format!("--reached goes with --all, of the program's code\n{USAGE}"));
     }
     if runtime {
-        return runtime_asm(&args, compiler, json, all, ir || rules || tests || against.is_some());
+        return runtime_asm(&args, compiler, same, json, all, ir || rules || tests || against.is_some());
     }
     let (path, function) = match (args.as_slice(), all) {
         ([], true) => (PathBuf::from("."), None),
@@ -2582,11 +2606,13 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     if let Some(reference) = compiler {
-        let (compiler, executable) = driver::compiler(&reference, &path)?;
+        let compared = driver::against_compiler(&reference, &path, same)?;
+        let (compiler, executable) = (compared.revision.clone(), compared.executable.clone());
         let comparison = driver::assembly_compiler(&path, &executable, function.as_deref(), tests)?;
         if json {
             let mut data = comparison.json();
             data["compiler"] = serde_json::json!(compiler);
+            data["compared"] = compared.json();
             print_json("asm", true, data);
         } else {
             print!("{}", driver::comparison_text(&format!("the tondo at {compiler}"), &comparison));

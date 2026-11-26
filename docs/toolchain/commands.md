@@ -89,7 +89,7 @@ usage:
             [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json|events] [--json]
             [--report json=<path> | junit=<path> | coverage=<path> | lcov=<path> | markdown=<path>
                       | html=<path>]... [--coverage]
-            [--bench [--bench-time <seconds>] [--save-baseline <name>] [--baseline <name|path>] [--against <rev> | --compiler <tondo|rev>]
+            [--bench [--bench-time <seconds>] [--save-baseline <name>] [--baseline <name|path>] [--against <rev> | --compiler <tondo|rev> [--same]]
                      [--max-regression <percent> [--regression-by time|instructions]] [--layouts <n>]]
             [--profile cpu|instructions|memory]
             [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]
@@ -195,13 +195,13 @@ usage:
                                                        program's code, the standard library's, the runtime,
                                                        the data and the tables, and the functions that weigh most
   tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>]
-            [--into <function>] [--cpu <level>] [--against <rev> | --compiler <tondo|rev>] [--json]
+            [--into <function>] [--cpu <level>] [--against <rev> | --compiler <tondo|rev> [--same]] [--json]
                                                        what a release build makes of the code: the calls it
                                                        inlines and those it keeps, the texts and closures made
                                                        without the heap, the checks it drops and those it keeps
-  tondo asm [<project>|<file.to>] [--tests] <function>|--all [--reached] [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]
+  tondo asm [<project>|<file.to>] [--tests] <function>|--all [--reached] [--clif] [--rules] [--against <rev> | --compiler <tondo|rev> [--same]]
             [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--json]
-  tondo asm --runtime <function>|--all [--compiler <tondo|rev>] [--json]
+  tondo asm --runtime <function>|--all [--compiler <tondo|rev> [--same]] [--json]
                                                        the machine code a release build makes of a function, by
                                                        the lines of the program, with what the passes did there;
                                                        its IR before and after Cranelift optimizes it

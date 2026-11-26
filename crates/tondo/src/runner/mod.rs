@@ -158,6 +158,9 @@ pub enum Baseline {
     Compiler {
         name: String,
         commit: String,
+        /// The sha256 of its executable, and of this `tondo`'s.
+        sha256: String,
+        ours: String,
         saved: PathBuf,
         /// The functions each test reaches whose code it makes otherwise.
         code: Vec<(String, Vec<crate::driver::ChangedCode>)>,
@@ -642,7 +645,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     let mut printer = human::Printer::new(tree, &plan, options);
     printer.baselines = match &options.baseline {
         Some(Baseline::Saved(path)) => bench::read_baseline(path).map_err(Failure::Input)?,
-        Some(Baseline::Compiler { name, commit, saved, code }) => {
+        Some(Baseline::Compiler { name, commit, sha256, ours, saved, code }) => {
             let mut read = bench::read_baseline(saved).map_err(Failure::Input)?;
             read.code = code.clone();
             read.compiler = true;
@@ -651,6 +654,8 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
                 ("kind", json::str("compiler")),
                 ("compiler", json::str(name.clone())),
                 ("commit", json::str(commit.clone())),
+                ("sha256", json::str(sha256.clone())),
+                ("this_sha256", json::str(ours.clone())),
             ]));
             read
         }
@@ -982,9 +987,15 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         machine: options.bench.map(bench::machine),
         baseline: options.baseline.as_ref().map(|baseline| match baseline {
             Baseline::Saved(path) => format!("the baseline {}", path.display()),
-            Baseline::Compiler { name, commit, .. } if commit.is_empty() => format!("the tondo at {name}"),
-            Baseline::Compiler { name, commit, .. } => {
-                format!("the tondo of {name} ({})", &commit[..commit.len().min(12)])
+            Baseline::Compiler { name, commit, sha256, .. } if commit.is_empty() => {
+                format!("the tondo at {name} (sha256 {})", &sha256[..sha256.len().min(16)])
+            }
+            Baseline::Compiler { name, commit, sha256, .. } => {
+                format!(
+                    "the tondo of {name} ({}, sha256 {})",
+                    &commit[..commit.len().min(12)],
+                    &sha256[..sha256.len().min(16)]
+                )
             }
             Baseline::Revision(r) => format!("{} ({}), run alongside", r.name, &r.commit[..r.commit.len().min(12)]),
         }),

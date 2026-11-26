@@ -1669,6 +1669,48 @@ fn kept_is(kept: &Path, commit: &str) -> bool {
     record["revision"] == commit && record["built"] == true && record["sha256"] == crate::hash::sha256_hex(&bytes)
 }
 
+/// The `tondo` a comparison runs and this one, each by its revision or path
+/// and its executable's sha256, which the comparison says first. The same
+/// executable on both sides compares nothing: two revisions that differ
+/// outside crates/, vendor/ and Cargo.* build the same one, which `same`
+/// lets through.
+pub fn against_compiler(reference: &str, near: &Path, same: bool) -> Result<Compared, String> {
+    let (revision, executable) = compiler(reference, near)?;
+    let sha = |path: &Path| std::fs::read(path).map(|bytes| crate::hash::sha256_hex(&bytes));
+    let theirs = sha(&executable).map_err(|e| format!("cannot read {}: {e}", executable.display()))?;
+    let ours = std::env::current_exe().and_then(|path| sha(&path)).unwrap_or_default();
+    eprintln!(
+        "tondo: comparing with the tondo of {revision} (sha256 {}), this one being {}",
+        &theirs[..theirs.len().min(16)],
+        &ours[..ours.len().min(16)]
+    );
+    if theirs == ours && !same {
+        return Err(format!(
+            "the tondo of {reference} is this tondo, byte for byte (sha256 {}): two revisions that differ outside \
+             crates/, vendor/ and Cargo.* build the same one, and a comparison of it with itself measures nothing; \
+             --same compares them anyway",
+            &theirs[..theirs.len().min(16)]
+        ));
+    }
+    Ok(Compared { revision, executable, sha256: theirs, ours })
+}
+
+/// The other side of a comparison, from `against_compiler`.
+pub struct Compared {
+    pub revision: String,
+    pub executable: PathBuf,
+    pub sha256: String,
+    /// This `tondo`'s sha256.
+    pub ours: String,
+}
+
+impl Compared {
+    /// Both sides, as a comparison's JSON keeps them.
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::json!({ "revision": self.revision, "sha256": self.sha256, "this_sha256": self.ours })
+    }
+}
+
 /// Whether cargo's messages say it found the `tondo` executable built, and
 /// did not build it again.
 fn fresh_tondo(messages: &[u8]) -> bool {

@@ -14,7 +14,8 @@
 // `tondo compiler` builds once, it compares that `tondo` with this one: the two
 // measure in turns, each first in every other round, and it fails when a
 // row costs more than `--max` percent, 5 by default, in instructions, or in
-// time where `perf` cannot count.
+// time where `perf` cannot count. It says each side's sha256 first, and stops
+// when both are one executable, which compares nothing, unless `--same`.
 //
 // With `--guard` it checks and builds the generated project of `--size`
 // lines, 24,000 by default, and of 8 times as many, and fails when either
@@ -27,6 +28,7 @@
 import std.console
 import std.env
 import std.fs
+import std.hash
 import std.path
 import std.process
 import std.time
@@ -278,6 +280,11 @@ fn guard(tondo: String, size: Int, runs: Int, counting: Bool, scratch: String): 
     }
 }
 
+/// The sha256 of an executable, as hex.
+fn sha256Of(file: String): String ! String {
+    hash.sha256(fs.readBytes(file).mapErr((e) { "cannot read {file}: {e}" })?).hex()
+}
+
 /// The old `tondo` against this one, in turns.
 fn againstOld(
     old: String,
@@ -340,6 +347,7 @@ fn againstOld(
 
 fn main(): !String {
     var (runs, output, old, max, size, guarding) = (5, "", "", 5.0, 24000, false)
+    var same = false
     var sizes = [3000, 24000, 192000]
     let arguments = env.args()
     for i in 0..arguments.length() {
@@ -352,6 +360,7 @@ fn main(): !String {
             "--max" => max = Float.parse(value) ?? 5.0
             "--size" => size = Int.parse(value) ?? 24000
             "--guard" => guarding = true
+            "--same" => same = true
             _ => {}
         }
     }
@@ -379,6 +388,15 @@ fn main(): !String {
             if not fs.exists(old) {
                 fail "no tondo of the revision: {(String.fromBytes(built.stderr) ?? "").trim()}"
             }
+        }
+        // Each side by its executable's sha256: the same executable on both
+        // compares nothing, but for two revisions that differ outside the
+        // compiler's sources, which `--same` lets through.
+        let here = if fs.exists(tondo) { tondo } else { process.which(tondo) ?? tondo }
+        let (theirs, ours) = (sha256Of(old)?, sha256Of(here)?)
+        console.println("comparing {old} (sha256 {theirs}) with {here} (sha256 {ours})")
+        if theirs == ours and not same {
+            fail "{old} is {here}, byte for byte: a comparison of it with itself measures nothing; --same compares them anyway"
         }
         againstOld(old, tondo, sizes, runs, max, counting, scratch, output)?
         return

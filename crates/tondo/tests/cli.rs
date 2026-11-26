@@ -1678,11 +1678,18 @@ fn compares_with_another_compiler() {
     let (_, stderr, status) = tondo(&dir, &["compiler", "nothing"]);
     assert_eq!(status, 3, "{stderr}");
     assert!(stderr.contains("no revision nothing") || stderr.contains("nor a revision"), "{stderr}");
+    // This tondo against itself compares nothing, and says so first, with
+    // the way on.
+    let (_, stderr, status) = tondo(&dir, &["optimizations", "main.to", "--compiler", tondo_bin]);
+    assert_ne!(status, 0, "{stderr}");
+    assert!(stderr.contains("comparing with the tondo of") && stderr.contains("byte for byte"), "{stderr}");
+    assert!(stderr.contains("--same compares them anyway"), "{stderr}");
     // The same compiler makes the same of the code.
-    let (said, stderr, status) = tondo(&dir, &["optimizations", "main.to", "--compiler", tondo_bin]);
+    let (said, stderr, status) = tondo(&dir, &["optimizations", "main.to", "--compiler", tondo_bin, "--same"]);
     assert_eq!(status, 0, "{stderr}");
     assert!(said.contains("makes of the code what the tondo of"), "{said}");
-    let (data, _) = json(&dir, &["optimizations", "main.to", "--compiler", tondo_bin, "--json"]);
+    let (data, _) = json(&dir, &["optimizations", "main.to", "--compiler", tondo_bin, "--same", "--json"]);
+    assert_eq!(data["compared"]["sha256"], data["compared"]["this_sha256"], "{data}");
     assert_eq!((&data["gone"], &data["new"]), (&json!([]), &json!([])), "{data}");
     let (_, stderr, status) = tondo(&dir, &["optimizations", "main.to", "--compiler", tondo_bin, "--against", "HEAD"]);
     assert_eq!(status, 2, "{stderr}");
@@ -1958,7 +1965,8 @@ fn the_machine_code_of_the_runtime() {
     let calls = functions[0]["instructions"].as_array().unwrap().iter().filter(|i| i["target"].is_string()).count();
     assert!(calls > 0, "{data}");
     let other = env!("CARGO_BIN_EXE_tondo");
-    let (said, stderr, status) = tondo(&dir, &["asm", "--runtime", "tondo_rt_array_push", "--compiler", other]);
+    let (said, stderr, status) =
+        tondo(&dir, &["asm", "--runtime", "tondo_rt_array_push", "--compiler", other, "--same"]);
     assert_eq!(status, 0, "{stderr}");
     assert!(said.contains("makes the same code"), "{said}");
     // All its own, which the same runtime makes the same.
@@ -1967,7 +1975,7 @@ fn the_machine_code_of_the_runtime() {
         data["functions"].as_array().unwrap().iter().filter_map(|f| f["function"].as_str()).collect();
     assert!(names.contains(&"tondo_rt_array_push") && names.len() > 500, "{}", names.len());
     assert!(names.iter().all(|n| n.starts_with("tondo_rt_") || n.starts_with("tondo_runtime::")), "{names:?}");
-    let (said, stderr, status) = tondo(&dir, &["asm", "--runtime", "--all", "--compiler", other]);
+    let (said, stderr, status) = tondo(&dir, &["asm", "--runtime", "--all", "--compiler", other, "--same"]);
     assert_eq!(status, 0, "{stderr}");
     assert!(said.contains("makes the same code"), "{said}");
     let (_, stderr, status) = tondo(&dir, &["asm", "--runtime", "nothing_of_the_runtime"]);
@@ -2015,7 +2023,7 @@ fn the_machine_code_of_a_function() {
     let (said, _, _) = tondo(&dir, &["asm", "main.to", "--all"]);
     assert!(said.contains("fib (") && said.contains("\nmain ("), "{said}");
     let this = env!("CARGO_BIN_EXE_tondo");
-    let (said, _, _) = tondo(&dir, &["asm", "main.to", "--all", "--compiler", this]);
+    let (said, _, _) = tondo(&dir, &["asm", "main.to", "--all", "--compiler", this, "--same"]);
     assert!(
         said.starts_with("a release build makes the same code as the tondo at ") && said.contains(" in 2 functions"),
         "{said}"

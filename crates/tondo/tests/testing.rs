@@ -968,7 +968,8 @@ fn compares_benchmarks_with_another_compiler() {
         fib(n - 1) + fib(n - 2)\n}\n\ntest fibonacci {\n    testing.bench(\"fib 15\", () { fib(15) })\n}\n";
     let dir = project("compiler-bench", tests);
     let other = env!("CARGO_BIN_EXE_tondo");
-    let args = ["test", "--bench", "--bench-time", "0.05", "--compiler", other, "--test-format", "json"];
+    // This tondo against itself, which `--same` lets through.
+    let args = ["test", "--bench", "--bench-time", "0.05", "--compiler", other, "--same", "--test-format", "json"];
     let (stdout, stderr, status) = tondo(&dir, &args);
     assert_eq!(status, 0, "{stdout}{stderr}");
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
@@ -978,7 +979,7 @@ fn compares_benchmarks_with_another_compiler() {
     assert!(stderr.contains("measuring the benchmarks with the tondo of"), "{stderr}");
     // Beside it a saved baseline is a second comparison, which must exist
     // before anything is measured.
-    let (_, stderr, status) = tondo(&dir, &["test", "--bench", "--compiler", other, "--baseline", "main"]);
+    let (_, stderr, status) = tondo(&dir, &["test", "--bench", "--compiler", other, "--same", "--baseline", "main"]);
     assert!(status == 1 && stderr.contains("cannot read the baseline"), "{stderr}");
     assert!(!stderr.contains("measuring the benchmarks"), "{stderr}");
     let (_, stderr, status) = tondo(&dir, &["test", "--compiler", other]);
@@ -1053,7 +1054,7 @@ fn both_sides_of_a_comparison_run_in_one_environment() {
     std::fs::set_permissions(&wrapper, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     let other = env!("CARGO_BIN_EXE_tondo");
     let wrapper = wrapper.to_str().unwrap();
-    let args = ["test", "--bench", "--bench-time", "0.05", "--compiler", other, "--exec", wrapper];
+    let args = ["test", "--bench", "--bench-time", "0.05", "--compiler", other, "--same", "--exec", wrapper];
     let (stdout, stderr, status) = tondo(&dir, &args);
     assert_eq!(status, 0, "{stdout}{stderr}");
     // Each run of the tests, by the `tondo` that started it.

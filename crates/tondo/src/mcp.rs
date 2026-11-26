@@ -258,13 +258,19 @@ impl Server {
                 // A function of the runtime, as this tondo links it.
                 if args.flag("runtime") {
                     if let Some(reference) = args.text("compiler") {
-                        let (compiler, executable) = driver::compiler(&reference, &args.path())?;
+                        let compared = driver::against_compiler(&reference, &args.path(), args.flag("same"))?;
+                        let (compiler, executable) = (compared.revision.clone(), compared.executable.clone());
                         let (changes, same) = driver::runtime_assembly_compiler(&executable, function)?;
                         let from = format!("the runtime of the tondo of {reference}");
                         let text = driver::assembly_changes_text(&from, &changes, same);
                         return Ok(Reply::new(
                             text,
-                            json!({ "compiler": compiler, "changes": listed(&changes), "same": same }),
+                            json!({
+                                "compiler": compiler,
+                                "compared": compared.json(),
+                                "changes": listed(&changes),
+                                "same": same,
+                            }),
                         ));
                     }
                     let assemblies = match function {
@@ -284,11 +290,13 @@ impl Server {
                     return Ok(Reply::new(driver::comparison_text(&from, &comparison), data));
                 }
                 if let Some(reference) = args.text("compiler") {
-                    let (compiler, executable) = driver::compiler(&reference, &args.path())?;
+                    let compared = driver::against_compiler(&reference, &args.path(), args.flag("same"))?;
+                    let (compiler, executable) = (compared.revision.clone(), compared.executable.clone());
                     let comparison =
                         driver::assembly_compiler(&args.path(), &executable, function, args.flag("tests"))?;
                     let mut data = comparison.json();
                     data["compiler"] = json!(compiler);
+                    data["compared"] = compared.json();
                     return Ok(Reply::new(
                         driver::comparison_text(&format!("the tondo of {reference}"), &comparison),
                         data,
@@ -310,7 +318,8 @@ impl Server {
             "optimizations" => {
                 let (function, kind) = (args.text("function"), args.text("kind"));
                 if let Some(reference) = args.text("compiler") {
-                    let (compiler, executable) = driver::compiler(&reference, &args.path())?;
+                    let compared = driver::against_compiler(&reference, &args.path(), args.flag("same"))?;
+                    let (compiler, executable) = (compared.revision.clone(), compared.executable.clone());
                     let (gone, new) = driver::optimizations_compiler(
                         &args.path(),
                         &executable,
@@ -328,7 +337,7 @@ impl Server {
                         |all: &[driver::Optimization]| all.iter().map(driver::Optimization::json).collect::<Vec<_>>();
                     return Ok(Reply::new(
                         text,
-                        json!({ "compiler": compiler, "gone": list(&gone), "new": list(&new) }),
+                        json!({ "compiler": compiler, "compared": compared.json(), "gone": list(&gone), "new": list(&new) }),
                     ));
                 }
                 if let Some(reference) = args.text("against") {
@@ -1401,6 +1410,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             option(&mut argv, "--baseline", "baseline");
             option(&mut argv, "--against", "against");
             option(&mut argv, "--compiler", "compiler");
+            switch(&mut argv, "--same", "same");
             if let Some(percent) = args.number("max_regression") {
                 argv.extend(["--max-regression".to_string(), percent.to_string()]);
             }
@@ -2543,6 +2553,12 @@ place, as the program's is, where a call of it that stays a call sums what its p
                 "string",
                 "Another tondo, or a revision of tondo's repository, built once: what it makes differently.",
             ),
+            (
+                "same",
+                "boolean",
+                "With `compiler`: compare even when the other tondo is this one, byte for byte, which compares nothing \
+unless the two revisions differ only outside crates/, vendor/ and Cargo.*.",
+            ),
         ],
     },
     Tool {
@@ -2607,6 +2623,12 @@ glue made for its types.",
                 "compiler",
                 "string",
                 "Another tondo, or a revision of tondo's repository, built once: what changed from the code it makes.",
+            ),
+            (
+                "same",
+                "boolean",
+                "With `compiler`: compare even when the other tondo is this one, byte for byte, which compares nothing \
+unless the two revisions differ only outside crates/, vendor/ and Cargo.*.",
             ),
         ],
     },
@@ -2873,6 +2895,12 @@ is reduced and kept in the project's `fuzz/` store, which every run of the tests
                 "compiler",
                 "string",
                 "With `bench`: compare with what another tondo, or a revision of tondo's repository, measures.",
+            ),
+            (
+                "same",
+                "boolean",
+                "With `compiler`: compare even when the other tondo is this one, byte for byte, which compares nothing \
+unless the two revisions differ only outside crates/, vendor/ and Cargo.*.",
             ),
             (
                 "max_regression",

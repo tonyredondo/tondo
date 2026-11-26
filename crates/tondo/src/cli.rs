@@ -157,7 +157,7 @@ pub const COMMANDS: &[Command] = &[
             "          [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json|events] [--json]",
             "          [--report json=<path> | junit=<path> | coverage=<path> | lcov=<path> | markdown=<path>",
             "                    | html=<path>]... [--coverage]",
-            "          [--bench [--bench-time <seconds>] [--save-baseline <name>] [--baseline <name|path>] [--against <rev> | --compiler <tondo|rev>]",
+            "          [--bench [--bench-time <seconds>] [--save-baseline <name>] [--baseline <name|path>] [--against <rev> | --compiler <tondo|rev> [--same]]",
             "                   [--max-regression <percent> [--regression-by time|instructions]] [--layouts <n>]]",
             "          [--profile cpu|instructions|memory]",
             "          [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]",
@@ -405,7 +405,7 @@ pub const COMMANDS: &[Command] = &[
         name: "optimizations",
         usage: &[
             "tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>]",
-            "          [--into <function>] [--cpu <level>] [--against <rev> | --compiler <tondo|rev>] [--json]",
+            "          [--into <function>] [--cpu <level>] [--against <rev> | --compiler <tondo|rev> [--same]] [--json]",
         ],
         summary: &[
             "what a release build makes of the code: the calls it",
@@ -416,9 +416,9 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "asm",
         usage: &[
-            "tondo asm [<project>|<file.to>] [--tests] <function>|--all [--reached] [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]",
+            "tondo asm [<project>|<file.to>] [--tests] <function>|--all [--reached] [--clif] [--rules] [--against <rev> | --compiler <tondo|rev> [--same]]",
             "          [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--json]",
-            "tondo asm --runtime <function>|--all [--compiler <tondo|rev>] [--json]",
+            "tondo asm --runtime <function>|--all [--compiler <tondo|rev> [--same]] [--json]",
         ],
         summary: &[
             "the machine code a release build makes of a function, by",
