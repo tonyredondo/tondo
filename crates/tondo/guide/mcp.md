@@ -35,7 +35,7 @@ inlines, makes without the heap and checks, place by place; `function` and
 `kind` keep a part of it, and `tests` reads the tests and benchmarks), `asm` (the
 machine code of a function, under its lines, and with `clif` Cranelift's
 IR; `all` every function, `compiler` what another tondo makes
-differently), `size` (what an executable weighs, by part and by function, and
+differently, and `same` when the two are one executable), `size` (what an executable weighs, by part and by function, and
 with `against` what changed), `explain`, and
 `model`, which checks a
 state machine of the program, a function `fn(state: S, event: E): S`, with

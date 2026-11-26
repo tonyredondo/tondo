@@ -1611,10 +1611,20 @@ and after. The tree of [regions](#what-a-region-takes) against the Tondo of
 
 ```text
 $ tondo test --bench --compiler <the tondo of 57ef8277>
+tondo: comparing with the tondo of <its path> (sha256 <its hash>), this one being <this one's>
 test tree::unit::tree::aTree ... ok
   tree of 87 thousand nodes     773.8 µs/op  ±0.2%  0 allocs/op +21845 in regions  0 B/op +2097120 in regions  15.37M ins/op  -29.4% faster, -25.0% ins, cycles -28.4%, l1d misses -35.5%, 0 allocs/op, was 21845, 0 B/op, was 2097120, 21845 allocs/op in regions, was 0, 2097120 B/op in regions, was 0
       code changed, in instructions: tondo_rt_array_push_in (runtime) 0 → 131, tondo_rt_region_reset (runtime) 0 → 125, tondo_rt_array_reserve_in (runtime) 0 → 112, tondo_rt_bench_next (runtime) 1479 → 1566, test aTree 359 → 381, tondo_rt_bench_end (runtime) 456 → 476, and 5 more
 ```
+
+A comparison says first which two it compares: the other Tondo's revision,
+or its path, and the hash of each executable, which its JSON keeps too. A
+revision's Tondo is built once and kept with a record of that build, checked
+each time it is used, and built again when the record does not vouch for it.
+When both sides are one executable the command stops and says so, as a
+comparison of a Tondo with itself measures nothing: two revisions that
+differ only in tests or documents build the same one, and `--same` compares
+them anyway.
 
 A row that moved with no such code changed says so: what moved is where
 its code lies, or what it reads. `tondo asm --runtime --all --compiler
@@ -1634,6 +1644,7 @@ texts in the glue:
 
 ```text
 $ tondo asm stats.to --all --compiler <the tondo of 531f45b9>
+tondo: comparing with the tondo of <its path> (sha256 <its hash>), this one being <this one's>
 the standard library and the dependencies, against the tondo at <its path>:
   std.formats: 2 instances changed
     formats.formatText (1 of 2): 380 → 411 instructions

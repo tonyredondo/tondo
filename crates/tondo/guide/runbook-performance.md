@@ -166,7 +166,10 @@ holds a `recover`, as a project's tests may, checks for a panic after what may
 raise one, which `optimizations` with `tests` says in a loop: a benchmark's
 row then costs more than the same loop in a program without one. After
 taking a new `tondo`, `compiler` with the old one, in `test` with `bench`, in
-`optimizations` and in `asm`, says what the new one makes differently.
+`optimizations` and in `asm`, says what the new one makes differently. Each
+says first which two it compares, by the hash of each executable, and stops
+when they are one: `same` goes on, for two revisions that build the same
+`tondo`.
 
 When the row says the cost is in allocations: `runbook-allocations`. For a
 program that is slow as it runs, without stopping it: `runbook-running`. To

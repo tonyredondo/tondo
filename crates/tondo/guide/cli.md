@@ -87,7 +87,9 @@ tondo asm --all --compiler <tondo> the functions another tondo makes other code 
                                    --rules, in a tondo built with them, Cranelift's rules
 tondo asm --runtime tondo_rt_array_push   a function of the runtime; --compiler HEAD, its diff
 tondo compiler HEAD~1              the tondo of a revision of tondo's repository, built once;
-                                   --compiler takes a revision as it takes a tondo
+                                   --compiler takes a revision as it takes a tondo, says
+                                   both by their sha256 first, and refuses a tondo
+                                   against itself: --same compares them anyway
 tondo test --bench --compiler HEAD~1   the benchmarks, against what that tondo measures
 tondo test --affected main         the tests that reach what changed since a commit
 tondo run --watch --tests          reloads on each change, and runs the tests it reaches
