@@ -591,25 +591,25 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
     };
     // Output written so far reaches the terminal before the children's.
     super::flush_stdout();
-    let environment = super::env::environment();
+    // The child's environment and the `PATH` its program is looked up on,
+    // from one hold of the program's copy.
+    let environment = super::env::for_child();
     let mut previous: Option<std::io::PipeReader> = None;
     let started = (|| {
         for (index, stage) in stages.iter().enumerate() {
             let last = index + 1 == stages.len();
-            let path = child_path(stage, &environment);
+            let path = child_path(stage, &environment.list);
             let found = located(&stage.program, path.as_deref(), stage.directory.as_deref())?;
             let mut command =
                 std::process::Command::new(found.as_deref().map_or(stage.program.as_os_str(), Path::as_os_str));
-            command.args(&stage.arguments).env_clear();
+            command.args(&stage.arguments);
             // Its `argv[0]`, which `ps` shows, stays the name the plan gave.
             command.arg0(stage.invoked.as_ref().unwrap_or(&stage.program));
             // The first stage leads the group, and the others join it.
             if stage.group {
                 command.process_group(running.group.map_or(0, |group| group as i32));
             }
-            if !stage.clear_env {
-                command.envs(environment.iter().map(|(k, v)| (k, v)));
-            }
+            given_environment(&mut command, stage, &environment);
             for (name, value) in &stage.env {
                 match value {
                     Some(value) => command.env(name, value),
@@ -708,19 +708,31 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
     Ok(running)
 }
 
-/// The `PATH` a stage's program is looked up on: its environment's.
+/// The `PATH` a stage's program is looked up on: its environment's, from
+/// the same copy the child is given.
 fn child_path(stage: &Stage, environment: &[(OsString, OsString)]) -> Option<OsString> {
-    let mut path = if stage.clear_env {
-        None
-    } else {
-        environment.iter().find(|(name, _)| name == "PATH").map(|(_, value)| value.clone())
-    };
-    for (name, value) in &stage.env {
+    for (name, value) in stage.env.iter().rev() {
         if name == "PATH" {
-            path = value.clone();
+            return value.clone();
         }
     }
-    path
+    if stage.clear_env {
+        return None;
+    }
+    environment.iter().find(|(name, _)| name == "PATH").map(|(_, value)| value.clone())
+}
+
+/// What a stage's child is given of the program's environment: none when
+/// its plan clears it, the system's as it is when that is the program's
+/// copy byte for byte and the stage fixes no variable of its own, and
+/// otherwise the copy, on which its own variables are then set.
+fn given_environment(command: &mut std::process::Command, stage: &Stage, environment: &super::env::ForChild) {
+    if stage.clear_env {
+        command.env_clear();
+    } else if !environment.inherit || !stage.env.is_empty() {
+        command.env_clear();
+        command.envs(environment.list.iter().map(|(k, v)| (k, v)));
+    }
 }
 
 /// What `execvp` looks on when the child's environment has no `PATH`: the
@@ -747,36 +759,92 @@ const DEFAULT_PATH: &str = "/bin:/usr/bin";
 /// `/`, or a file that only `execvp` runs, a script with no `#!` that it
 /// hands to the shell.
 fn located(program: &OsStr, path: Option<&OsStr>, directory: Option<&Path>) -> std::io::Result<Option<PathBuf>> {
-    if program.is_empty() || program.as_bytes().contains(&b'/') {
+    let program = program.as_bytes();
+    if program.is_empty() || program.contains(&b'/') {
         return Ok(None);
     }
-    let here = std::env::current_dir()?;
-    let directory = directory.map_or_else(|| here.clone(), |directory| here.join(directory));
+    // No file has a NUL in its name, so none is found, as the lookup by
+    // paths answered before.
+    if program.contains(&0) {
+        return Err(ErrorKind::NotFound.into());
+    }
     let path = path.map_or(DEFAULT_PATH.as_bytes(), OsStr::as_bytes);
+    let mut base: Option<PathBuf> = None;
+    let mut buf = Vec::with_capacity(128);
     let mut denied = false;
     for entry in path.split(|&byte| byte == b':') {
-        let file = directory.join(OsStr::from_bytes(entry)).join(program);
-        match std::fs::metadata(&file) {
-            Ok(found) if found.is_file() && runnable(&file) => return Ok(started_by_path(file)),
-            Ok(_) => denied = true,
-            Err(error) if error.kind() == ErrorKind::PermissionDenied => denied = true,
-            Err(_) => {}
+        if entry.contains(&0) {
+            continue;
+        }
+        buf.clear();
+        if entry.first() == Some(&b'/') {
+            buf.extend_from_slice(entry);
+        } else {
+            let root = match &base {
+                Some(root) => root,
+                None => {
+                    let here = std::env::current_dir()?;
+                    let resolved = directory.map_or(here.clone(), |dir| here.join(dir));
+                    base.insert(resolved)
+                }
+            };
+            buf.extend_from_slice(root.as_os_str().as_bytes());
+            if !entry.is_empty() {
+                if buf.last() != Some(&b'/') {
+                    buf.push(b'/');
+                }
+                buf.extend_from_slice(entry);
+            }
+        }
+        if buf.last() != Some(&b'/') {
+            buf.push(b'/');
+        }
+        buf.extend_from_slice(program);
+        buf.push(0);
+        let cpath = buf.as_ptr().cast();
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::stat(cpath, &mut st) } == 0 {
+            if (st.st_mode & libc::S_IFMT) == libc::S_IFREG && unsafe { libc::access(cpath, libc::X_OK) } == 0 {
+                return Ok(started_by_path_cstr(&buf));
+            }
+            denied = true;
+        } else if std::io::Error::last_os_error().raw_os_error() == Some(libc::EACCES) {
+            denied = true;
         }
     }
     Err(if denied { ErrorKind::PermissionDenied } else { ErrorKind::NotFound }.into())
 }
 
-/// Whether this process may run the file.
-fn runnable(file: &Path) -> bool {
-    let Ok(name) = std::ffi::CString::new(file.as_os_str().as_bytes()) else { return false };
-    unsafe { libc::access(name.as_ptr(), libc::X_OK) == 0 }
-}
-
 /// The file when the system runs it by itself, as its first bytes say: a
 /// `#!` line, or an executable of ELF or Mach-O. Another goes to `execvp`.
-fn started_by_path(file: PathBuf) -> Option<PathBuf> {
+fn started_by_path_cstr(nul_path: &[u8]) -> Option<PathBuf> {
     let mut head = [0u8; 4];
-    let read = std::fs::File::open(&file).and_then(|mut opened| opened.read(&mut head)).unwrap_or(0);
+    // A signal that comes during a call is no answer of the file's: the
+    // call is made again, as std's `File::open` and `read` do.
+    let interrupted = || std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR);
+    let fd = loop {
+        let fd = unsafe { libc::open(nul_path.as_ptr().cast(), libc::O_RDONLY | libc::O_CLOEXEC) };
+        if fd >= 0 || !interrupted() {
+            break fd;
+        }
+    };
+    let read = if fd >= 0 {
+        let mut got = 0usize;
+        while got < head.len() {
+            let n = unsafe { libc::read(fd, head[got..].as_mut_ptr().cast(), head.len() - got) };
+            if n < 0 && interrupted() {
+                continue;
+            }
+            if n <= 0 {
+                break;
+            }
+            got += n as usize;
+        }
+        unsafe { libc::close(fd) };
+        got
+    } else {
+        0
+    };
     let shebang = read >= 2 && head.starts_with(b"#!");
     let binary = read == 4
         && (head == *b"\x7fELF"
@@ -784,7 +852,7 @@ fn started_by_path(file: PathBuf) -> Option<PathBuf> {
                 u32::from_be_bytes(head),
                 0xfeed_face | 0xfeed_facf | 0xcefa_edfe | 0xcffa_edfe | 0xcafe_babe | 0xbeba_feca
             ));
-    (shebang || binary).then_some(file)
+    (shebang || binary).then(|| PathBuf::from(OsStr::from_bytes(&nul_path[..nul_path.len() - 1])))
 }
 
 /// The children of processes that started and nobody waited for, which a
@@ -1170,8 +1238,7 @@ pub unsafe extern "C" fn tondo_rt_process_which(name: *const Str, region: *mut c
     let found = if name.as_bytes().contains(&b'/') {
         Some(PathBuf::from(&name)).filter(|path| runnable(path))
     } else {
-        let environment = super::env::environment();
-        let path = environment.iter().find(|(key, _)| key == "PATH").map(|(_, value)| value.clone());
+        let path = super::env::path_var();
         path.unwrap_or_default().as_bytes().split(|&b| b == b':').find_map(|directory| {
             let directory = if directory.is_empty() { OsStr::new(".") } else { OsStr::from_bytes(directory) };
             Some(std::path::Path::new(directory).join(&name)).filter(|path| path.to_str().is_some() && runnable(path))
@@ -1375,16 +1442,14 @@ pub unsafe extern "C" fn tondo_rt_process_text(
 pub unsafe extern "C" fn tondo_rt_process_exec(plan: *mut PlanObject, _out: *mut i64) -> i64 {
     let Some(stage) = plan_ref(plan).stages.first() else { return HOST };
     let mut command = std::process::Command::new(&stage.program);
-    command.args(&stage.arguments).env_clear();
+    command.args(&stage.arguments);
     if let Some(invoked) = &stage.invoked {
         command.arg0(invoked);
     }
     if stage.group {
         command.process_group(0);
     }
-    if !stage.clear_env {
-        command.envs(super::env::environment().iter().map(|(k, v)| (k, v)));
-    }
+    given_environment(&mut command, stage, &super::env::for_child());
     for (name, value) in &stage.env {
         match value {
             Some(value) => command.env(name, value),
@@ -1683,5 +1748,138 @@ fn quietly(pipe: &mio::unix::pipe::Sender, data: &[u8]) -> std::io::Result<usize
         }
         libc::pthread_sigmask(libc::SIG_SETMASK, &before, std::ptr::null_mut());
         written
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::ffi::CString;
+
+    /// What a child started now prints of its environment, given it as a
+    /// stage that fixes nothing is.
+    fn childs_environment() -> BTreeMap<Vec<u8>, Vec<u8>> {
+        let stage = Stage {
+            program: "/usr/bin/env".into(),
+            arguments: Vec::new(),
+            directory: None,
+            clear_env: false,
+            env: Vec::new(),
+            stdin: None,
+            stdout: None,
+            stderr: None,
+            merge: false,
+            group: false,
+            grace: None,
+            invoked: None,
+        };
+        let mut command = std::process::Command::new(&stage.program);
+        given_environment(&mut command, &stage, &super::super::env::for_child());
+        let printed = command.output().expect("/usr/bin/env runs").stdout;
+        printed
+            .split(|&b| b == b'\n')
+            .filter_map(|line| {
+                let at = line.iter().skip(1).position(|&b| b == b'=')? + 1;
+                Some((line[..at].to_vec(), line[at + 1..].to_vec()))
+            })
+            .collect()
+    }
+
+    fn set_in_copy(name: &str, value: &str) {
+        let text = |bytes: &str| crate::strings::str_in(std::ptr::null_mut(), bytes.as_bytes());
+        unsafe { super::super::env::tondo_rt_env_set(text(name), text(value), text("here")) };
+    }
+
+    fn fast() -> bool {
+        super::super::env::for_child().inherit
+    }
+
+    fn c(text: &str) -> CString {
+        CString::new(text).unwrap()
+    }
+
+    /// Whatever C code does to the system's environment, a child gets the
+    /// program's copy (standard library 14.3.5), and gets the system's as it
+    /// is only while that is the copy byte for byte. It changes the process's
+    /// environment, so it runs alone in a process of its own.
+    #[test]
+    fn a_child_gets_the_programs_copy_whatever_the_system_does() {
+        if std::env::var_os("TONDO_ENVIRONMENT_ALONE").is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "process::tests::a_child_gets_the_programs_copy_whatever_the_system_does"])
+                .args(["--test-threads", "1", "--nocapture"])
+                .env("TONDO_ENVIRONMENT_ALONE", "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "the test in its own process failed");
+            return;
+        }
+        // macOS starts a program it protects, as /usr/bin/env, without the
+        // `DYLD_*` variables, which cargo gives its tests there: the process
+        // lets them go before its copy is first read.
+        #[cfg(target_os = "macos")]
+        for name in std::env::vars_os().map(|(name, _)| name).collect::<Vec<_>>() {
+            if name.as_encoded_bytes().starts_with(b"DYLD_") {
+                unsafe { std::env::remove_var(name) };
+            }
+        }
+        let copy = super::super::env::copy;
+        assert!(fast(), "nothing changed: the child inherits the system's, which is the copy");
+        assert_eq!(childs_environment(), copy());
+        set_in_copy("TONDO_TRIED", "abc");
+        assert!(!fast(), "the program changed its copy");
+        assert_eq!(childs_environment(), copy());
+        super::super::env::tondo_rt_env_sync_native();
+        assert!(fast(), "syncNative made the system's the copy");
+        type Change = Box<dyn Fn()>;
+        let changes: [(&str, Change); 5] = [
+            (
+                "a new variable",
+                Box::new(|| unsafe {
+                    libc::setenv(c("TONDO_NEW").as_ptr(), c("1").as_ptr(), 1);
+                }),
+            ),
+            (
+                "a longer value",
+                Box::new(|| unsafe {
+                    libc::setenv(c("TONDO_TRIED").as_ptr(), c("abcdef").as_ptr(), 1);
+                }),
+            ),
+            (
+                "a value as long",
+                Box::new(|| unsafe {
+                    libc::setenv(c("TONDO_TRIED").as_ptr(), c("xyz").as_ptr(), 1);
+                }),
+            ),
+            (
+                "a variable removed",
+                Box::new(|| unsafe {
+                    libc::unsetenv(c("TONDO_TRIED").as_ptr());
+                }),
+            ),
+            (
+                "a byte written in place",
+                Box::new(|| unsafe {
+                    let entry = super::super::env::system_entry(b"TONDO_TRIED");
+                    *entry.add("TONDO_TRIED=".len()) = b'z' as libc::c_char;
+                }),
+            ),
+        ];
+        for (what, change) in &changes {
+            change();
+            assert!(!fast(), "{what}: the system's is no longer the copy");
+            assert_eq!(childs_environment(), copy(), "{what}: the child gets the copy");
+            assert!(!fast(), "{what}: the copy goes on going to children");
+            super::super::env::tondo_rt_env_sync_native();
+            assert!(fast(), "{what}: syncNative made them equal again");
+            assert_eq!(childs_environment(), copy());
+        }
+        // A harness that gives the system back its environment after
+        // `syncNative`, behind the program's copy.
+        set_in_copy("TONDO_KEPT", "1");
+        super::super::env::tondo_rt_env_sync_native();
+        unsafe { libc::unsetenv(c("TONDO_KEPT").as_ptr()) };
+        assert_eq!(childs_environment().get(b"TONDO_KEPT".as_slice()), Some(&b"1".to_vec()));
     }
 }

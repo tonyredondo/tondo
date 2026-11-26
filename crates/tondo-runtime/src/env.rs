@@ -7,23 +7,170 @@ use super::{ArrayHeader, MapGlue, MapObject, Str, str_bytes};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 type Table = BTreeMap<Vec<u8>, Vec<u8>>;
+pub(crate) type EnvList = Vec<(OsString, OsString)>;
 
-static TABLE: Mutex<Option<Table>> = Mutex::new(None);
-
-fn table() -> MutexGuard<'static, Option<Table>> {
-    let mut table = TABLE.lock().unwrap_or_else(|e| e.into_inner());
-    table.get_or_insert_with(|| std::env::vars_os().map(|(k, v)| (k.into_vec(), v.into_vec())).collect());
-    table
+/// The program's copy of the environment, as children are given it, and
+/// the system's environment while it is known to be that copy.
+struct State {
+    table: Table,
+    /// The copy as a child is given it, made at the first start and again
+    /// only after `set`, `setAll` or `remove`.
+    prepared: Option<Arc<EnvList>>,
+    /// The system's environment, entry by entry in its order, as it was when
+    /// it last equalled the copy: when the copy was read from it, and after
+    /// `syncNative`. `None` once the program changed its copy or the system's
+    /// moved from it, until `syncNative` makes them equal again.
+    system: Option<Vec<Vec<u8>>>,
 }
 
-/// The environment processes started now inherit.
-pub(crate) fn environment() -> Vec<(OsString, OsString)> {
-    let table = table();
-    let table = table.as_ref().unwrap();
-    table.iter().map(|(k, v)| (OsString::from_vec(k.clone()), OsString::from_vec(v.clone()))).collect()
+static STATE: Mutex<Option<State>> = Mutex::new(None);
+
+fn state() -> MutexGuard<'static, Option<State>> {
+    let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    guard.get_or_insert_with(|| {
+        let system = system_entries();
+        let table: Table = system.iter().filter_map(|entry| variable(entry)).collect();
+        let system = same(system, &table);
+        State { table, prepared: None, system }
+    });
+    guard
+}
+
+/// The system's entries when they are the copy, one entry for each of its
+/// variables: an entry with no `=`, or a name given twice, which the copy
+/// reads as its last, would give a child what the copy has not.
+fn same(system: Vec<Vec<u8>>, table: &Table) -> Option<Vec<Vec<u8>>> {
+    let each = system.len() == table.len()
+        && system.iter().all(|entry| {
+            variable(entry).is_some_and(|(name, value)| table.get(&name).is_some_and(|kept| *kept == value))
+        });
+    each.then_some(system)
+}
+
+/// What a child started now is given of the program's environment: the
+/// copy, and whether the system's environment is that copy byte for byte,
+/// so that the child may inherit it as it is, with nothing copied (standard
+/// library 14.3.5: children inherit the program's copy). Both come from
+/// one hold of the lock, so a start beside a `set` gets the whole of the
+/// environment from before it or the whole of it from after.
+pub(crate) struct ForChild {
+    pub(crate) list: Arc<EnvList>,
+    pub(crate) inherit: bool,
+}
+
+pub(crate) fn for_child() -> ForChild {
+    let mut guard = state();
+    let state = guard.as_mut().unwrap();
+    // Compared by bytes, not by where they are: a `setenv` may put another
+    // value where the old one was, or C code may write over a string it gave
+    // `putenv`. Once the two differ, the copy goes to every child until
+    // `syncNative` makes them equal again.
+    let inherit = match &state.system {
+        Some(entries) if unsafe { system_is(entries) } => true,
+        Some(_) => {
+            state.system = None;
+            false
+        }
+        None => false,
+    };
+    let list = state.prepared.get_or_insert_with(|| {
+        Arc::new(
+            state.table.iter().map(|(k, v)| (OsString::from_vec(k.clone()), OsString::from_vec(v.clone()))).collect(),
+        )
+    });
+    ForChild { list: Arc::clone(list), inherit }
+}
+
+/// The program's copy, as `env.vars()` gives it.
+#[cfg(test)]
+pub(crate) fn copy() -> Table {
+    state().as_ref().unwrap().table.clone()
+}
+
+/// The string of the system's environment that holds `name`, for a test to
+/// write over in place as C code may.
+#[cfg(test)]
+pub(crate) unsafe fn system_entry(name: &[u8]) -> *mut libc::c_char {
+    unsafe {
+        let mut at = environ();
+        while !at.is_null() && !(*at).is_null() {
+            let entry = std::ffi::CStr::from_ptr(*at).to_bytes();
+            if entry.len() > name.len() && entry.starts_with(name) && entry[name.len()] == b'=' {
+                return *at as *mut libc::c_char;
+            }
+            at = at.add(1);
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// The program's `PATH`, from its copy.
+pub(crate) fn path_var() -> Option<OsString> {
+    state().as_ref().unwrap().table.get(b"PATH".as_slice()).map(|v| OsString::from_vec(v.clone()))
+}
+
+/// A change of the program's copy: what a child is given is made again,
+/// and the system's environment is no longer the copy.
+fn changed(state: &mut State) {
+    state.prepared = None;
+    state.system = None;
+}
+
+/// A `name=value` entry as std reads it: the name ends at the first `=`
+/// after its first byte; an entry with none is no variable.
+fn variable(entry: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+    let at = entry.iter().skip(1).position(|&b| b == b'=')? + 1;
+    Some((entry[..at].to_vec(), entry[at + 1..].to_vec()))
+}
+
+/// The system's environment, entry by entry.
+fn system_entries() -> Vec<Vec<u8>> {
+    let mut entries = Vec::new();
+    // SAFETY: `environ` ends with a null pointer, and each of its entries is
+    // a C string. Another thread's `setenv` while this reads is the same
+    // exposure std's own start of a child has.
+    unsafe {
+        let mut at = environ();
+        while !at.is_null() && !(*at).is_null() {
+            entries.push(std::ffi::CStr::from_ptr(*at).to_bytes().to_vec());
+            at = at.add(1);
+        }
+    }
+    entries
+}
+
+/// Whether the system's environment holds `entries`, in their order, and
+/// nothing more, with nothing allocated.
+///
+/// # Safety
+/// As `system_entries`.
+unsafe fn system_is(entries: &[Vec<u8>]) -> bool {
+    unsafe {
+        let mut at = environ();
+        for entry in entries {
+            if at.is_null() || (*at).is_null() || std::ffi::CStr::from_ptr(*at).to_bytes() != entry.as_slice() {
+                return false;
+            }
+            at = at.add(1);
+        }
+        at.is_null() || (*at).is_null()
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn environ() -> *const *const libc::c_char {
+    unsafe { *libc::_NSGetEnviron() as *const *const libc::c_char }
+}
+
+#[cfg(not(target_os = "macos"))]
+unsafe fn environ() -> *const *const libc::c_char {
+    unsafe extern "C" {
+        static environ: *const *const libc::c_char;
+    }
+    unsafe { environ }
 }
 
 /// `bytes` as UTF-8 reads them, in `region` when it is not null.
@@ -90,7 +237,7 @@ pub(crate) fn arguments() -> &'static [OsString] {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_env_get(name: *const Str, region: *mut crate::regions::Region) -> *mut Str {
     let name = unsafe { str_bytes(&name) };
-    table().as_ref().unwrap().get(name).map_or(std::ptr::null_mut(), |value| text(region, value))
+    state().as_ref().unwrap().table.get(name).map_or(std::ptr::null_mut(), |value| text(region, value))
 }
 
 /// `env.vars()`, by name, as a `Map[String, String]` with `glue`.
@@ -98,7 +245,7 @@ pub unsafe extern "C" fn tondo_rt_env_get(name: *const Str, region: *mut crate::
 pub unsafe extern "C" fn tondo_rt_env_vars(glue: *const MapGlue) -> *mut MapObject {
     let mut map = super::tondo_rt_map_new(16, 8);
     let mut old = [0u8; 16];
-    for (name, value) in table().as_ref().unwrap() {
+    for (name, value) in &state().as_ref().unwrap().table {
         let (key, value) = (text(std::ptr::null_mut(), name), text(std::ptr::null_mut(), value));
         unsafe {
             super::tondo_rt_map_insert(
@@ -118,7 +265,10 @@ pub unsafe extern "C" fn tondo_rt_env_vars(glue: *const MapGlue) -> *mut MapObje
 pub unsafe extern "C" fn tondo_rt_env_set(name: *const Str, value: *const Str, location: *const Str) {
     let (name, value) = unsafe { (str_bytes(&name), str_bytes(&value)) };
     if check(name, value, location) {
-        table().as_mut().unwrap().insert(name.to_vec(), value.to_vec());
+        let mut guard = state();
+        let state = guard.as_mut().unwrap();
+        state.table.insert(name.to_vec(), value.to_vec());
+        changed(state);
     }
 }
 
@@ -133,7 +283,10 @@ pub unsafe extern "C" fn tondo_rt_env_set_all(values: *mut MapObject, location: 
         })
         .collect();
     if entries.iter().all(|(name, value)| check(name, value, location)) {
-        table().as_mut().unwrap().extend(entries);
+        let mut guard = state();
+        let state = guard.as_mut().unwrap();
+        state.table.extend(entries);
+        changed(state);
     }
 }
 
@@ -141,7 +294,10 @@ pub unsafe extern "C" fn tondo_rt_env_set_all(values: *mut MapObject, location: 
 pub unsafe extern "C" fn tondo_rt_env_remove(name: *const Str, location: *const Str) {
     let name = unsafe { str_bytes(&name) };
     if check(name, b"", location) {
-        table().as_mut().unwrap().remove(name);
+        let mut guard = state();
+        let state = guard.as_mut().unwrap();
+        state.table.remove(name);
+        changed(state);
     }
 }
 
@@ -298,17 +454,19 @@ pub unsafe extern "C" fn tondo_rt_env_set_current_directory(path: *const Str) ->
     }
 }
 
-/// `env.syncNative()`: makes the host's environment the program's.
+/// `env.syncNative()`: makes the host's environment the program's, which
+/// children may then inherit as it is.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_env_sync_native() {
-    let table = table();
-    let table = table.as_ref().unwrap();
+    let mut guard = state();
+    let state = guard.as_mut().unwrap();
     for (name, _) in std::env::vars_os() {
-        if !table.contains_key(name.as_bytes()) {
+        if !state.table.contains_key(name.as_bytes()) {
             unsafe { std::env::remove_var(name) };
         }
     }
-    for (name, value) in table {
+    for (name, value) in &state.table {
         unsafe { std::env::set_var(std::ffi::OsStr::from_bytes(name), std::ffi::OsStr::from_bytes(value)) };
     }
+    state.system = same(system_entries(), &state.table);
 }

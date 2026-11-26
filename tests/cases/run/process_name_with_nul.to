@@ -1,0 +1,17 @@
+// A program's name with a NUL names no file, so looking it up on `PATH`
+// finds none: `ProcessError.NotFound`, as for any name that is nowhere
+// (standard library 19.2).
+import std.console
+import std.process
+
+fn main() {
+    for name in ["no\u{0}where", "tondo-no-such-program"] {
+        match process.command(name).run() {
+            ok(_) => console.println("ran")
+            err(e) => console.println("{e}")
+        }
+    }
+}
+
+// expect-stdout: not found
+// expect-stdout: not found

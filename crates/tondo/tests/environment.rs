@@ -18,6 +18,11 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ),
     ("testing.rs", "(name)", "the environment a test changed, given back before the next"),
     ("client.rs", "(name)", "the proxies, by curl's names, read as a client is made, which a program may set first"),
+    (
+        "process.rs",
+        "\"TONDO_ENVIRONMENT_ALONE\"",
+        "a unit test's mark that it runs in a process of its own, as it changes the system's environment",
+    ),
 ];
 
 fn runtime() -> std::path::PathBuf {
