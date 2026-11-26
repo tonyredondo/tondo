@@ -1598,8 +1598,15 @@ pub fn compiler(reference: &str, near: &Path) -> Result<(String, PathBuf), Strin
     }
     let kept = cache_entry("compiler", &commit);
     let executable = kept.join("tondo");
+    // Kept only with the record of the build that made it, and its bytes as
+    // that build left them: an entry from before records, or another's,
+    // builds again.
     if executable.is_file() {
-        return Ok((commit, executable));
+        if kept_is(&kept, &commit) {
+            return Ok((commit, executable));
+        }
+        eprintln!("tondo: the tondo kept for {reference} is not known to be its own build: building it again");
+        std::fs::remove_dir_all(&kept).map_err(|e| format!("cannot remove {}: {e}", kept.display()))?;
     }
     eprintln!("tondo: building the tondo of {reference} ({}), once", &commit[..commit.len().min(12)]);
     // One target for every revision. Cargo builds a crate again when one of
@@ -1638,7 +1645,28 @@ pub fn compiler(reference: &str, near: &Path) -> Result<(String, PathBuf), Strin
     let partial = kept.join(format!("tondo.{}", std::process::id()));
     std::fs::copy(target.join("release/tondo"), &partial).map_err(|e| format!("cannot keep the tondo built: {e}"))?;
     std::fs::rename(&partial, &executable).map_err(|e| format!("cannot keep the tondo built: {e}"))?;
+    let bytes = std::fs::read(&executable).map_err(|e| format!("cannot read the tondo built: {e}"))?;
+    let record = serde_json::json!({
+        "revision": commit,
+        "sha256": crate::hash::sha256_hex(&bytes),
+        "built": true,
+        "by": env!("CARGO_PKG_VERSION"),
+    });
+    std::fs::write(kept.join("built.json"), format!("{record}\n"))
+        .map_err(|e| format!("cannot write the record of the tondo built: {e}"))?;
     Ok((commit, executable))
+}
+
+/// Whether the `tondo` kept in `kept` is the one the build of `commit` made:
+/// its record names the revision and that cargo built it, and its bytes
+/// are those the record's sha256 gives.
+fn kept_is(kept: &Path, commit: &str) -> bool {
+    let record = std::fs::read_to_string(kept.join("built.json")).ok();
+    let Some(record) = record.and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok()) else {
+        return false;
+    };
+    let Ok(bytes) = std::fs::read(kept.join("tondo")) else { return false };
+    record["revision"] == commit && record["built"] == true && record["sha256"] == crate::hash::sha256_hex(&bytes)
 }
 
 /// Whether cargo's messages say it found the `tondo` executable built, and
@@ -3780,6 +3808,32 @@ mod tests {
             assert!(std::fs::metadata(tree.join(file)).unwrap().modified().unwrap() > built, "{file}");
         }
         let _ = std::fs::remove_dir_all(&tree);
+    }
+
+    /// A kept compiler counts as its revision's only with the record of the
+    /// build that made it, naming that revision, and the bytes the record's
+    /// sha256 gives.
+    #[test]
+    fn a_kept_compiler_is_trusted_by_its_record() {
+        let kept = std::env::temp_dir().join(format!("tondo-kept-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&kept);
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::write(kept.join("tondo"), b"an executable").unwrap();
+        let sha = crate::hash::sha256_hex(b"an executable");
+        let record = |revision: &str, sha256: &str, built: bool| {
+            let record = serde_json::json!({ "revision": revision, "sha256": sha256, "built": built });
+            std::fs::write(kept.join("built.json"), record.to_string()).unwrap();
+        };
+        assert!(!super::kept_is(&kept, "abc"), "no record");
+        record("abc", &sha, true);
+        assert!(super::kept_is(&kept, "abc"));
+        assert!(!super::kept_is(&kept, "def"), "another revision's");
+        record("abc", &sha, false);
+        assert!(!super::kept_is(&kept, "abc"), "found, not built");
+        record("abc", &sha, true);
+        std::fs::write(kept.join("tondo"), b"other bytes").unwrap();
+        assert!(!super::kept_is(&kept, "abc"), "other bytes");
+        let _ = std::fs::remove_dir_all(&kept);
     }
 
     /// Cargo's own words on whether it built `tondo` or found it built.
