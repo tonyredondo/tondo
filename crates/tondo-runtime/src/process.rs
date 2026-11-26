@@ -808,7 +808,8 @@ fn located(program: &OsStr, path: Option<&OsStr>, directory: Option<&Path>) -> s
                 return Ok(started_by_path_cstr(&buf));
             }
             denied = true;
-        } else if std::io::Error::last_os_error().raw_os_error() == Some(libc::EACCES) {
+        } else if matches!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EACCES | libc::EPERM)) {
+            // As std's `metadata` read both: a file the process may not see.
             denied = true;
         }
     }
