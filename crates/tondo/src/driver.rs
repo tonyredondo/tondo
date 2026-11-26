@@ -1602,7 +1602,13 @@ pub fn compiler(reference: &str, near: &Path) -> Result<(String, PathBuf), Strin
         return Ok((commit, executable));
     }
     eprintln!("tondo: building the tondo of {reference} ({}), once", &commit[..commit.len().min(12)]);
-    // One target for every revision, which builds again only what differs.
+    // One target for every revision. Cargo builds a crate again when one of
+    // its files is newer than its last build, and an archive gives each file
+    // its commit's time: a revision older than the last one built would keep
+    // that one's code. Its files are made newer than any build first, so the
+    // workspace's crates build again; the runtime, kept by what makes it,
+    // does not.
+    touch_all(&tree).map_err(|e| format!("cannot touch the files of {reference}: {e}"))?;
     let target = cache_dir().join("compiler-target");
     let built = Command::new("cargo")
         .args(["build", "--release", "--locked", "--quiet", "-p", "tondo"])
@@ -1620,6 +1626,21 @@ pub fn compiler(reference: &str, near: &Path) -> Result<(String, PathBuf), Strin
     std::fs::copy(target.join("release/tondo"), &partial).map_err(|e| format!("cannot keep the tondo built: {e}"))?;
     std::fs::rename(&partial, &executable).map_err(|e| format!("cannot keep the tondo built: {e}"))?;
     Ok((commit, executable))
+}
+
+/// Gives every file under `dir` the time of now.
+fn touch_all(dir: &Path) -> std::io::Result<()> {
+    let now = std::time::SystemTime::now();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            touch_all(&entry.path())?;
+        } else if kind.is_file() {
+            std::fs::File::options().write(true).open(entry.path())?.set_modified(now)?;
+        }
+    }
+    Ok(())
 }
 
 /// The MIR passes of a release build, in their order, each followed by
