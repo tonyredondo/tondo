@@ -1726,7 +1726,9 @@ variables and the machine, and a later series takes it from there, saying
 since when, as the two lines above do: a series with one more commit
 measures that commit alone. `--fresh` measures every revision again. A
 benchmark whose test fails with some revision has no measure there; the
-series goes on, and fails at its end naming the test and the revision.
+series goes on, and fails at its end naming the test and the revision. A
+measure whose run had a failing test is not kept: it serves the series that
+ran it, and the next series measures that revision again.
 
 ## The processor a build is for
 
