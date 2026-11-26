@@ -625,7 +625,7 @@ impl StreamState {
     pub(crate) fn read_line<T>(&mut self, most: usize, make: impl FnOnce(&[u8]) -> T) -> std::io::Result<Option<T>> {
         loop {
             let ahead = &self.ahead[self.position..self.filled];
-            if let Some(end) = memchr::memchr(b'\n', ahead) {
+            if let Some(end) = find_newline(ahead) {
                 let line = &ahead[..end];
                 let line = line.strip_suffix(b"\r").unwrap_or(line);
                 if end > most && line.len() > most {
@@ -867,9 +867,19 @@ impl StreamState {
     /// Whether a whole line was read ahead. A line longer than its bound is
     /// not, and `read_line` refuses it where it waits.
     pub(crate) fn has_line(&self) -> bool {
-        memchr::memchr(b'\n', &self.ahead[self.position..self.filled]).is_some()
+        find_newline(&self.ahead[self.position..self.filled]).is_some()
     }
+}
 
+/// Finds the first `\n` in `bytes`: an inline byte scan for short/empty
+/// slices so socket reads avoid `memchr`'s indirect dispatch, and `memchr`
+/// once a chunk holds at least 16 bytes.
+#[inline]
+fn find_newline(bytes: &[u8]) -> Option<usize> {
+    if bytes.len() < 16 { bytes.iter().position(|&b| b == b'\n') } else { memchr::memchr(b'\n', bytes) }
+}
+
+impl StreamState {
     /// Whether bytes were read ahead.
     pub(crate) fn has_bytes(&self) -> bool {
         self.position < self.filled
