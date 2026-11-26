@@ -158,7 +158,8 @@ pub fn run(series: &Series) -> Result<ExitCode, String> {
         for (project, sources) in series.projects.iter().zip(&sources) {
             let key =
                 key(&tondo.sha256, &project.display().to_string(), sources, &series.measuring, &environment, &machine);
-            let measure = measure(tondo, project, &series.measuring, &key, series.fresh)?;
+            let kept = crate::driver::cache_dir().join("series").join(format!("{key}.json"));
+            let measure = measure(tondo, project, &series.measuring, &kept, series.fresh)?;
             say(format!(
                 "  {} {}: {}",
                 short(&tondo.revision),
@@ -509,16 +510,32 @@ fn smoke(tondo: &Tondo, project: &Path, test: &str, measuring: &[String]) -> Res
     ))
 }
 
-/// The project measured with the tondo, or as the cache keeps it.
-fn measure(tondo: &Tondo, project: &Path, measuring: &[String], key: &str, fresh: bool) -> Result<Measure, String> {
-    let kept = crate::driver::cache_dir().join("series").join(format!("{key}.json"));
-    if !fresh && let Some(measure) = read_kept(&kept) {
+/// The project measured with the tondo, or as the cache keeps it at
+/// `kept`. A measure is kept only when every test of its run passed: one
+/// that failed for a reason of the moment, a busy machine or a port, would
+/// otherwise fail every later series over that revision unmeasured.
+fn measure(tondo: &Tondo, project: &Path, measuring: &[String], kept: &Path, fresh: bool) -> Result<Measure, String> {
+    if !fresh && let Some(measure) = read_kept(kept, &tondo.sha256) {
         return Ok(measure);
     }
-    let scratch = crate::driver::cache_dir().join("series").join(format!("measuring-{}", std::process::id()));
+    let folder = kept.parent().unwrap_or(Path::new("."));
+    let scratch = folder.join(format!("measuring-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).map_err(|e| format!("cannot create {}: {e}", scratch.display()))?;
+    let measured = run_measure(tondo, project, measuring, &scratch);
+    let _ = std::fs::remove_dir_all(&scratch);
+    let (entry, passed) = measured?;
+    if passed {
+        crate::driver::write_atomic(kept, format!("{entry}\n").as_bytes())?;
+    }
+    let mut measure = measure_of(&entry, &tondo.sha256).ok_or("a measure that reads as none".to_string())?;
+    measure.now = true;
+    Ok(measure)
+}
+
+/// One run of the project's benchmarks with the tondo, in `scratch`: what
+/// it measured, as the cache keeps it, and whether every test passed.
+fn run_measure(tondo: &Tondo, project: &Path, measuring: &[String], scratch: &Path) -> Result<(Value, bool), String> {
     let (baseline, report) = (scratch.join("baseline.json"), scratch.join("report.json"));
-    let _ = std::fs::remove_file(&baseline);
     let ran = Command::new(&tondo.executable)
         .arg("test")
         .arg(project)
@@ -544,28 +561,30 @@ fn measure(tondo: &Tondo, project: &Path, measuring: &[String], key: &str, fresh
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
         .map(|report| failed_tests(&report))
         .unwrap_or_default();
-    let measured = now();
     let entry = json!({
         "format": "tondo-series-measure-0.1/1",
         "revision": tondo.revision,
         "sha256": tondo.sha256,
         "project": project.display().to_string(),
-        "measured": measured,
+        "measured": now(),
         "failed": failed,
         "size": size(tondo, project),
         "baseline": serde_json::from_str::<Value>(&saved).map_err(|e| format!("the baseline measured is not JSON: {e}"))?,
     });
-    crate::driver::write_atomic(&kept, format!("{entry}\n").as_bytes())?;
-    let _ = std::fs::remove_dir_all(&scratch);
-    let mut measure = read_kept(&kept).ok_or(format!("cannot read back {}", kept.display()))?;
-    measure.now = true;
-    Ok(measure)
+    Ok((entry, ran.success() && failed.is_empty()))
 }
 
-/// A measure the cache keeps, if it reads as one.
-fn read_kept(path: &Path) -> Option<Measure> {
+/// A measure the cache keeps, if it reads as one of the tondo of these
+/// bytes.
+fn read_kept(path: &Path, sha256: &str) -> Option<Measure> {
     let entry: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
-    if entry["format"] != "tondo-series-measure-0.1/1" {
+    measure_of(&entry, sha256)
+}
+
+/// A measure as the cache keeps it, if it is one of the tondo of these
+/// bytes.
+fn measure_of(entry: &Value, sha256: &str) -> Option<Measure> {
+    if entry["format"] != "tondo-series-measure-0.1/1" || entry["sha256"] != sha256 {
         return None;
     }
     Some(Measure {
@@ -899,5 +918,69 @@ mod tests {
         assert_eq!(put_down(steps[..2].iter().copied(), "p", "t", "row"), Some(1));
         assert_eq!(put_down(steps[1..2].iter().copied(), "p", "t", "row"), None, "it only fell");
         assert_eq!(put_down(steps.iter().copied(), "p", "t", "other"), None);
+    }
+
+    /// A stand-in for a tondo, as a script: `test` saves a baseline of one
+    /// benchmark and a report whose test has `status`, and ends with
+    /// `code`; `size` gives a size.
+    #[cfg(unix)]
+    fn stand_in(dir: &Path, status: &str, code: i32) -> Tondo {
+        use std::os::unix::fs::PermissionsExt;
+        let script = format!(
+            "#!/bin/sh\n\
+             [ \"$1\" = size ] && {{ echo '{{\"size\": 1000}}'; exit 0; }}\n\
+             while [ $# -gt 0 ]; do\n\
+             case \"$1\" in --save-baseline) baseline=$2; shift ;; --report) report=${{2#json=}}; shift ;; esac\n\
+             shift\n\
+             done\n\
+             echo '{{\"format\":\"tondo-bench-baseline-0.1/1\",\"environment\":{{}},\"benchmarks\":\
+             [{{\"test\":\"p::t\",\"name\":\"row\",\"instructions_per_op\":100.0,\"samples_ns_per_op\":[10.0]}}]}}' > \"$baseline\"\n\
+             echo '{{\"tests\":[{{\"id\":\"p::t\",\"status\":\"{status}\"}}]}}' > \"$report\"\n\
+             exit {code}\n"
+        );
+        std::fs::create_dir_all(dir).unwrap();
+        let executable = dir.join("tondo");
+        std::fs::write(&executable, script).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Tondo { revision: "f".repeat(40), executable, sha256: "ab".repeat(32) }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_measure_is_kept_only_when_every_test_of_its_run_passed() {
+        let dir = std::env::temp_dir().join(format!("tondo-series-kept-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let project = dir.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        // A run whose tests pass is kept, and a second series takes it.
+        let (passing, kept) = (stand_in(&dir.join("passing"), "passed", 0), dir.join("cache/passing.json"));
+        let first = measure(&passing, &project, &[], &kept, false).unwrap();
+        assert!(first.now && first.failed.is_empty() && first.size == Some(1000));
+        assert_eq!(first.benchmarks[&("p::t".to_string(), "row".to_string())].instructions, Some(100.0));
+        assert!(!measure(&passing, &project, &[], &kept, false).unwrap().now, "kept");
+        assert!(measure(&passing, &project, &[], &kept, true).unwrap().now, "--fresh measures again");
+        // A run with a failed test gives its measure to this series alone.
+        let (failing, kept) = (stand_in(&dir.join("failing"), "failed", 1), dir.join("cache/failing.json"));
+        let first = measure(&failing, &project, &[], &kept, false).unwrap();
+        assert_eq!(first.failed, ["p::t"]);
+        assert!(!kept.exists(), "a measure with a failed test is kept");
+        assert!(measure(&failing, &project, &[], &kept, false).unwrap().now, "the next series measures it again");
+        let left: Vec<_> = dir.join("cache").read_dir().unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert!(!left.iter().any(|name| name.to_string_lossy().starts_with("measuring-")), "{left:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_kept_measure_is_only_the_tondo_s_of_its_bytes() {
+        let entry = json!({
+            "format": "tondo-series-measure-0.1/1",
+            "sha256": "aa",
+            "measured": 1,
+            "failed": [],
+            "size": null,
+            "baseline": {"benchmarks": []},
+        });
+        assert!(measure_of(&entry, "aa").is_some());
+        assert!(measure_of(&entry, "bb").is_none(), "another tondo's bytes");
     }
 }

@@ -10448,7 +10448,9 @@ measures the same sources, the projects where the command runs, once: the
 measure is kept under the `tondo`'s sha256, the sources' sha256, the
 options, the environment's `TONDO_*` and the machine (processor, kernel,
 C library), and a series run again takes it from there and says since
-when. A step says the benchmarks that moved against the commit before, by
+when. Only a measure whose tests all passed is kept: one that failed for
+a reason of the moment would otherwise fail every later series over that
+revision without running it. A step says the benchmarks that moved against the commit before, by
 their instructions, half a percent or more, and their allocations and
 bytes, which repeat from run to run, with their two times and no verdict;
 and the size of the tests' executable. The whole, head against base in
