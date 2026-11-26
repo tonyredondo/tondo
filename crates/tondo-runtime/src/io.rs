@@ -871,12 +871,33 @@ impl StreamState {
     }
 }
 
-/// Finds the first `\n` in `bytes`: an inline byte scan for short/empty
-/// slices so socket reads avoid `memchr`'s indirect dispatch, and `memchr`
-/// once a chunk holds at least 16 bytes.
+/// Finds the first `\n` in `bytes`: an inline SWAR scan of the first 16 bytes
+/// so short lines (even inside a larger read-ahead buffer) avoid `memchr`'s
+/// indirect dispatch, falling back to `memchr` for longer lines.
 #[inline]
 fn find_newline(bytes: &[u8]) -> Option<usize> {
-    if bytes.len() < 16 { bytes.iter().position(|&b| b == b'\n') } else { memchr::memchr(b'\n', bytes) }
+    const LO: u64 = 0x0101_0101_0101_0101;
+    const HI: u64 = 0x8080_8080_8080_8080;
+    const NL: u64 = 0x0a0a_0a0a_0a0a_0a0a;
+    if bytes.len() >= 8 {
+        let word = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+        let x = word ^ NL;
+        let m = x.wrapping_sub(LO) & !x & HI;
+        if m != 0 {
+            return Some((m.trailing_zeros() >> 3) as usize);
+        }
+        if bytes.len() >= 16 {
+            let word = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+            let x = word ^ NL;
+            let m = x.wrapping_sub(LO) & !x & HI;
+            if m != 0 {
+                return Some(8 + (m.trailing_zeros() >> 3) as usize);
+            }
+            return memchr::memchr(b'\n', &bytes[16..]).map(|i| i + 16);
+        }
+        return bytes[8..].iter().position(|&b| b == b'\n').map(|i| i + 8);
+    }
+    bytes.iter().position(|&b| b == b'\n')
 }
 
 impl StreamState {
@@ -1082,10 +1103,19 @@ pub unsafe extern "C" fn tondo_rt_io_write(stream: *mut StreamObject, text: *con
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_io_write_line(stream: *mut StreamObject, text: *const Str) -> i64 {
-    let mut data = unsafe { str_bytes(&text).to_vec() };
+    let bytes = unsafe { str_bytes(&text) };
+    if let Ok(mut state) = unsafe { (*stream).state.try_lock() }
+        && state.has_room(bytes.len() + 1)
+    {
+        state.pending.reserve(bytes.len() + 1);
+        state.pending.extend_from_slice(bytes);
+        state.pending.push(b'\n');
+        return 0;
+    }
+    let mut data = Vec::with_capacity(bytes.len() + 1);
+    data.extend_from_slice(bytes);
     data.push(b'\n');
-    let count = data.len();
-    status(run_ready(stream, |s| s.has_room(count), move |s| s.write(&data)), |_| ())
+    status(run(stream, move |s| s.write(&data)), |_| ())
 }
 
 #[unsafe(no_mangle)]
@@ -1112,7 +1142,23 @@ pub unsafe extern "C" fn tondo_rt_io_read_line(
     region: *mut crate::regions::Region,
 ) -> i64 {
     let (region, most) = (WaitingRegion(region), most.max(0) as usize);
-    let line = run_ready(stream, StreamState::has_line, move |s| {
+    // Fast path: scan the read-ahead buffer once under `try_lock` instead of
+    // scanning once in `has_line` and a second time in `read_line`.
+    if let Ok(mut state) = unsafe { (*stream).state.try_lock() } {
+        let ahead = &state.ahead[state.position..state.filled];
+        if let Some(end) = find_newline(ahead) {
+            let line = &ahead[..end];
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            if end > most && line.len() > most {
+                return status::<Option<Made>>(Err(crate::too_large(most)), |_| {});
+            }
+            let made = if state.utf8 { Some(region.made(line)) } else { region.made_text(line) };
+            state.position += end + 1;
+            let result = made.ok_or_else(|| ErrorKind::InvalidData.into()).map(Some);
+            return status(result, |line| unsafe { *out = line.map_or(std::ptr::null_mut(), |l| l.0) });
+        }
+    }
+    let line = run(stream, move |s| {
         let trusted = s.utf8;
         s.read_line(most, move |bytes| if trusted { Some(region.made(bytes)) } else { region.made_text(bytes) })?
             .map(|line| line.ok_or_else(|| ErrorKind::InvalidData.into()))
@@ -1433,4 +1479,33 @@ pub(crate) fn finish() -> Option<std::io::ErrorKind> {
         unsafe { tondo_rt_stream_release(stream) };
     }
     failed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_newline;
+
+    /// The search of a line's end, eight bytes at a time and then by
+    /// memchr, finds what a search byte by byte finds: at every place of
+    /// every length up to 40, among bytes that differ from `\n` by one bit
+    /// or by the borrow a word's test can carry, and with none.
+    #[test]
+    fn a_lines_end_is_found_where_it_is() {
+        for fill in [b'a', 0x0b, 0x09, 0x8a, 0x0e, 0x00, 0xff] {
+            for length in 0..40 {
+                let mut bytes = vec![fill; length];
+                assert_eq!(find_newline(&bytes), None, "{fill:#x} {length}");
+                for at in 0..length {
+                    bytes[at] = b'\n';
+                    for later in at + 1..length {
+                        bytes[later] = b'\n';
+                        assert_eq!(find_newline(&bytes), Some(at), "{fill:#x} {length} {at} {later}");
+                        bytes[later] = fill;
+                    }
+                    assert_eq!(find_newline(&bytes), Some(at), "{fill:#x} {length} {at}");
+                    bytes[at] = fill;
+                }
+            }
+        }
+    }
 }
