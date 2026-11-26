@@ -302,6 +302,7 @@ fn againstOld(
         "|---|---|---:|---:|---:|---:|---:|",
     ]
     var regressed: Array[String] = []
+    var rows: Array[Row] = []
     for (index, case) in all.enumerate() {
         let (oldCache, newCache) = (
             path.join(scratch, "old-{index}"),
@@ -324,6 +325,7 @@ fn againstOld(
             }
         }
         let (before, now) = (combined(olds), combined(news))
+        rows.push(Row { case, before, now })
         let change = if counting {
             (now.instructions / before.instructions - 1.0) * 100.0
         } else {
@@ -339,10 +341,114 @@ fn againstOld(
     }
     lines.push("")
     lines.push("{regressed.length()} of {all.length()} rows regressed by more than {max}%.")
+    // A part of the compiler that runs on one thread makes a build take
+    // longer and costs no more instructions, by which the rows above are
+    // judged: such rows are named, with the parts whose time grew, and a
+    // part that grew in both larger generated projects fails the run.
+    var failing = ""
+    let parted = if counting { clockParted(rows) } else { [] }
+    if not parted.isEmpty() {
+        lines.push("")
+        lines.push(
+            "Slower by the clock with level instructions, a part on one thread, by TONDO_COMPILE_TIMES:",
+        )
+        let generatedBuilds = rows.filter(
+            row => row.case.program.startsWith("generated") and command(row.case.kind) == "build",
+        )
+        let larger =
+            generatedBuilds.slice((generatedBuilds.length() - 2).max(0), generatedBuilds.length()) ??
+                []
+        var grewInLarger: Array[Array[String]] = []
+        for row in parted {
+            let grown = grownParts(old, tondo, row.case, scratch)?
+            let named = grown.map(part => "{part.name} +{part.percent.toFixed(0)}%")
+            let said = if named.isEmpty() {
+                "no part grew by more than 10%"
+            } else {
+                named.join(", ")
+            }
+            lines.push("- {row.case.program} {command(row.case.kind)}: {said}")
+            if command(row.case.kind) == "build" and
+                larger.any(other => other.case.target == row.case.target) {
+                grewInLarger.push(grown.map(part => part.name))
+            }
+        }
+        if grewInLarger.length() == 2 {
+            let both = grewInLarger[0].filter(name => grewInLarger[1].contains(name))
+            if not both.isEmpty() {
+                failing = "slower by the clock in both larger projects, in {both.join(", ")}"
+            }
+        }
+    }
     report(lines, output)?
     if not regressed.isEmpty() {
         fail "regressed: {regressed.join(", ")}"
     }
+    if failing != "" {
+        fail failing
+    }
+}
+
+/// A row of both sides.
+type Row = {
+    case: Case
+    before: Measure
+    now: Measure
+}
+
+/// A part of the compiler whose time grew, and by how much, in percent.
+type Grown = {
+    name: String
+    percent: Float
+}
+
+/// The change from `before` to `now`, in percent.
+fn percent(before: Float, now: Float): Float {
+    (now / before - 1.0) * 100.0
+}
+
+/// The rows of half a second or more whose time grew, and by more than 3
+/// points over their instructions, where the check of the same program
+/// is level within 2% on both sides, so that the machine did not drift.
+fn clockParted(rows: Array[Row]): Array[Row] {
+    let level = (program: String): Bool {
+        rows.all(
+            row =>
+                row.case.program != program or
+                    command(row.case.kind) != "check" or
+                    percent(row.before.nanoseconds, row.now.nanoseconds).abs() <= 2.0,
+        )
+    }
+    rows.filter(
+        row =>
+            row.before.nanoseconds >= 500_000_000.0 and
+                percent(row.before.nanoseconds, row.now.nanoseconds) > 0.0 and
+                percent(row.before.nanoseconds, row.now.nanoseconds) -
+                    percent(row.before.instructions, row.now.instructions) >
+                    3.0 and
+                level(row.case.program),
+    )
+}
+
+/// The parts whose median time over three runs of `case` on each side
+/// grew by more than 10% from `old` to `tondo`, the most first.
+fn grownParts(old: String, tondo: String, case: Case, scratch: String): Array[Grown] ! String {
+    var (olds, news): (Array[Map[String, Float]], Array[Map[String, Float]]) = ([], [])
+    for _ in 0..3 {
+        olds.push(parts(once(old, case, path.join(scratch, "parts-old"), false, true)?))
+        news.push(parts(once(tondo, case, path.join(scratch, "parts-new"), false, true)?))
+    }
+    var grown: Array[Grown] = []
+    for (name, _) in news[0] {
+        let before = median(olds.map(took => took.get(name) ?? 0.0))
+        let now = median(news.map(took => took.get(name) ?? 0.0))
+        // Parts of a few milliseconds grow by noise.
+        if before > 50.0 and percent(before, now) > 10.0 {
+            grown.push(Grown { name, percent: percent(before, now) })
+        }
+    }
+    grown.sortBy(part => -part.percent)
+    grown
 }
 
 fn main(): !String {
