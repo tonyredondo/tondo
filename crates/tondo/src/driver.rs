@@ -1610,22 +1610,49 @@ pub fn compiler(reference: &str, near: &Path) -> Result<(String, PathBuf), Strin
     // does not.
     touch_all(&tree).map_err(|e| format!("cannot touch the files of {reference}: {e}"))?;
     let target = cache_dir().join("compiler-target");
+    // The revision the target last built, which cargo cannot have found
+    // `tondo` already built for if it was another.
+    let last = target.join("revision");
+    let before = std::fs::read_to_string(&last).unwrap_or_default();
     let built = Command::new("cargo")
-        .args(["build", "--release", "--locked", "--quiet", "-p", "tondo"])
+        .args(["build", "--release", "--locked", "--quiet", "--message-format=json-render-diagnostics", "-p", "tondo"])
         .current_dir(&tree)
         .env("CARGO_TARGET_DIR", &target)
         .env_remove("TONDO_RUNTIME_FAST")
-        .stdout(Stdio::null())
-        .status()
+        .stderr(Stdio::inherit())
+        .output()
         .map_err(|e| format!("building the tondo of {reference} needs cargo, from https://rustup.rs: {e}"))?;
-    if !built.success() {
+    if !built.status.success() {
         return Err(format!("the tondo of {reference} does not build: cargo says why above"));
     }
+    if before.trim() != commit && fresh_tondo(&built.stdout) {
+        return Err(format!(
+            "cargo found the tondo of {reference} already built in {}, whose last build was of {}: that build is \
+             not this revision's; remove the directory and ask again",
+            target.display(),
+            before.trim()
+        ));
+    }
+    std::fs::write(&last, &commit).map_err(|e| format!("cannot write {}: {e}", last.display()))?;
     std::fs::create_dir_all(&kept).map_err(|e| format!("cannot create {}: {e}", kept.display()))?;
     let partial = kept.join(format!("tondo.{}", std::process::id()));
     std::fs::copy(target.join("release/tondo"), &partial).map_err(|e| format!("cannot keep the tondo built: {e}"))?;
     std::fs::rename(&partial, &executable).map_err(|e| format!("cannot keep the tondo built: {e}"))?;
     Ok((commit, executable))
+}
+
+/// Whether cargo's messages say it found the `tondo` executable built, and
+/// did not build it again.
+fn fresh_tondo(messages: &[u8]) -> bool {
+    String::from_utf8_lossy(messages)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .any(|message| {
+            message["reason"] == "compiler-artifact"
+                && message["target"]["name"] == "tondo"
+                && message["target"]["kind"].as_array().is_some_and(|kinds| kinds.iter().any(|kind| kind == "bin"))
+                && message["fresh"] == true
+        })
 }
 
 /// Gives every file under `dir` the time of now.
@@ -3733,6 +3760,42 @@ pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, SystemTime};
+
+    /// A revision's tree, as an archive gives it, has every file at its
+    /// commit's time; touched, every one of them is newer than a build made
+    /// before, so cargo builds its crates again.
+    #[test]
+    fn a_revisions_files_are_made_newer_than_any_build() {
+        let tree = std::env::temp_dir().join(format!("tondo-touch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tree);
+        std::fs::create_dir_all(tree.join("crates/tondo/src")).unwrap();
+        let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        for file in ["Cargo.toml", "crates/tondo/src/main.rs", "crates/tondo/src/driver.rs"] {
+            std::fs::write(tree.join(file), "").unwrap();
+            std::fs::File::options().write(true).open(tree.join(file)).unwrap().set_modified(old).unwrap();
+        }
+        let built = SystemTime::now() - Duration::from_secs(1);
+        super::touch_all(&tree).unwrap();
+        for file in ["Cargo.toml", "crates/tondo/src/main.rs", "crates/tondo/src/driver.rs"] {
+            assert!(std::fs::metadata(tree.join(file)).unwrap().modified().unwrap() > built, "{file}");
+        }
+        let _ = std::fs::remove_dir_all(&tree);
+    }
+
+    /// Cargo's own words on whether it built `tondo` or found it built.
+    #[test]
+    fn cargo_finding_tondo_built_is_told() {
+        let artifact = |name: &str, kind: &str, fresh: bool| {
+            format!(
+                "{{\"reason\":\"compiler-artifact\",\"target\":{{\"name\":\"{name}\",\"kind\":[\"{kind}\"]}},\"fresh\":{fresh}}}\n"
+            )
+        };
+        let built = artifact("tondo", "bin", false) + &artifact("tondo_runtime", "lib", true);
+        assert!(!super::fresh_tondo(built.as_bytes()));
+        let found = artifact("tondo", "lib", false) + &artifact("tondo", "bin", true);
+        assert!(super::fresh_tondo(found.as_bytes()));
+        assert!(!super::fresh_tondo(b"{\"reason\":\"build-finished\",\"success\":true}\n"));
+    }
 
     /// Two long listings alike show no change, and one instruction changed
     /// in the middle of them shows as that one alone.
