@@ -226,6 +226,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Deep enough for the last revision whose compiler differs.
+          fetch-depth: 200
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
@@ -241,6 +244,11 @@ jobs:
       - run: target/release/tondo run bench/compile.to -- --guard --runs 3
         env:
           TONDO: target/release/tondo
+      # `tondo compiler` gives an older revision its own code when it is
+      # built after a newer one in the same target (decision 267).
+      - name: A revision's compiler is its own
+        if: ${{ !cancelled() }}
+        run: sh .github/scripts/compiler-identity.sh target/release/tondo
 
   # The parsers of the standard library, searched for inputs that fail
   # (docs/refactor.md, 0.6). What fails stays in testing/fuzz/fuzz, to
