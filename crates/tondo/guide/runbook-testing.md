@@ -128,9 +128,9 @@ test payAndCancelAtOnce {
 `check` reads the tests too, once the code is right. Then `test` runs them all:
 the fuzz test with its seeds and the benchmark once. A test that starts tasks
 and stays in the program, as `payAndCancelAtOnce`, it also runs in every order
-of its tasks that differs, a few hundred at most, since one run proves only the
-order the machine gave: here one of them loses a write, in the order the
-machine gave or in another, and the run names it either way.
+of its tasks that differs, up to 200 orders or 2 seconds, since one run proves
+only the order the machine gave: here one of them loses a write, in the order
+the machine gave or in another, and the run names it either way.
 
 ```mcp
 check {}
@@ -204,7 +204,16 @@ step:
 ```mcp
 test {}
 => 6 passed
-=> passed in every order of them that differs
+```
+
+A plain run gives the orders of such a test 2 seconds and 200 of them, and its
+note says how far that went: that the test passed in every order that differs,
+or, on a slow or a busy machine, that it had more orders than a run tries.
+Asked for all of them, the run has no clock, and says how many there were:
+
+```mcp
+test {"filter": "payAndCancelAtOnce", "schedules": "all"}
+=> orders, all that differ
 ```
 
 `coverage` says what no test ran: one line of `src/order.to` of 19, where
@@ -260,9 +269,9 @@ test {"bench": true, "bench_time": 1}
   checks with no model to write, and `model` writes the test of. Then each
   rule is a property in `holds`. Prefer this to many tests of single events.
 - **Every order**: a test where tasks share something, small, with two or
-  three tasks. `test` runs it in every order of them that differs, up to a
-  few hundred, when it stays in the program; one that reaches files, the
-  network or a database runs once, as running it again would change them,
+  three tasks. `test` runs it in every order of them that differs, up to 200
+  orders or 2 seconds, when it stays in the program; one that reaches files,
+  the network or a database runs once, as running it again would change them,
   and `--schedules all` tries its orders when it leaves them as it found
   them. A failure gives the order, to run again and to debug with
   `debug_start` and `schedule`. `tondo guide runbook-flaky`.
