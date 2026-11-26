@@ -61,6 +61,11 @@ pub(crate) struct ForChild {
     pub(crate) inherit: bool,
 }
 
+/// Two `syncNative`s cannot write `environ` while this compares it: they
+/// hold the copy's lock too. What one hold of it cannot cover is what comes
+/// after: a `set` and a `syncNative` in other tasks, between this and the
+/// child's start, give the child the later environment, whole, with its
+/// program looked up on the earlier `PATH`.
 pub(crate) fn for_child() -> ForChild {
     let mut guard = state();
     let state = guard.as_mut().unwrap();
@@ -456,6 +461,11 @@ pub unsafe extern "C" fn tondo_rt_env_set_current_directory(path: *const Str) ->
 
 /// `env.syncNative()`: makes the host's environment the program's, which
 /// children may then inherit as it is.
+///
+/// It writes through std's `set_var` and `remove_var`, and must stay on
+/// them: they take std's lock of the environment, which std's start of a
+/// child holds while it reads `environ`, as a start that inherits it does.
+/// Written through libc itself, `environ` could move under such a start.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_env_sync_native() {
     let mut guard = state();
