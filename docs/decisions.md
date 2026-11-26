@@ -10128,3 +10128,48 @@ main. No other row moved past 1%, and `callback 1000`, measured alone over
 four orders of the functions, not at all. The other way, the measured loop
 compiled apart so that a row's code does not depend on what else its test
 holds, moves every row's base and is left to weigh with the next table.
+
+## The numbers a panic keeps are found once for a function, over those it keeps
+
+Main's CI went red on the musl job of x86-64 at 57ba41c7: the watchdog of
+tests.sh ended the cases' binary at 1,806 seconds, with a debug `tondo
+build` of yaml_tagged.to asleep in a futex, and PR #53's CI showed the same
+on tensor_definitions.to. A loop of 807 builds of those cases alone on the
+runner never stopped (run 45696413944); looped as the job runs them, the
+cases' binary beside the testing binary, the build that outlived five
+minutes was tensor_definitions.to at `--cpu x86-64-v3`, from
+`vectors_at_the_level_of_avx2` (run 45709541276). Its main thread and two
+workers waited in a futex, and the third computed: the code generator's
+`keep_numbers`, before a panic the program wrote, ran the analysis of what
+each block's end finds assigned over every block and every local, with a
+vector for each block in each round, again at each of the function's
+panics. That `main` has 2,491 blocks, 27 panics and 1,549 locals.
+
+The analysis now runs once for a function, at its first panic, and
+follows only the locals the panics keep, at most 64, as a mask for each
+block: what costs a function is its blocks and statements. That build
+takes the debug tondo 5.3 s where it took 40.4 s (its code generator
+0.46 s where it took 35.5 s), and the release tondo 8.1 G instructions
+where it took 64.6 G; the code that comes out is the same, listing for
+listing, for the two cases and two examples, at the default level and at
+x86-64-v3. yaml_tagged.to's build is not slower by this (1.23 s and 1.21 s):
+main's cut on it was the binary at its limit, and that build only what ran
+at the cut. In the green musl jobs before, the cases' binary took 1,099
+to 1,806 seconds against the watchdog's 1,800, so the job had no margin;
+in the job's container on this machine of 32 cores the binary takes
+172 s with either compiler, as the test of the vectors runs beside the
+cases and ends before them: past a minute with main's compiler, under it
+with this one. On the runner's four cores that minute is the cases'; the
+next runs say how much of the margin it gives back.
+
+A test holds the masks to the analysis as it was, on a join where one way
+assigns, a loop whose way back reaches a block before the assignment, a
+parameter given at the entry, blocks nothing reaches and more than 64
+locals. The project bench/compile generates has a function with an
+assert at each line, as many as its units, so that the Nightly's `--guard`
+fails if a function's checks cost more than its length: with main's
+compiler the project of 200,734 lines did not build in 15 minutes where
+the one of 26,035 took 7.8 s; with this one they take 34.9 s and 4.2 s.
+The watchdog of tests.sh now writes, before it ends a binary, each
+thread's call and wait and the open files of every process of its tree,
+which is what told the computing worker from the waiting ones here.
