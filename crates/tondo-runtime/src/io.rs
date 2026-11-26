@@ -539,6 +539,13 @@ pub(crate) struct StreamState {
     /// Whether the host knows how much is left, which it says as the
     /// stream is made, so that others are not asked at each read.
     sized: bool,
+    /// True for an in-memory reader whose bytes are already all in `ahead`
+    /// with no underlying `Host`, cleared once `close()` runs, which keeps
+    /// them ahead.
+    memory: bool,
+    /// True while `ahead[position..filled]` is guaranteed to be valid UTF-8
+    /// (as for `io.reader(text)`), cleared if byte-level reads advance mid-scalar.
+    utf8: bool,
 }
 
 const WRITE_BUFFER: usize = 64 * 1024;
@@ -579,6 +586,9 @@ impl StreamState {
 
     /// Reads more bytes ahead; false at the end of the data.
     fn fill(&mut self) -> std::io::Result<bool> {
+        if self.memory {
+            return Ok(false);
+        }
         if !self.pending.is_empty() {
             self.flush()?;
         }
@@ -586,10 +596,16 @@ impl StreamState {
             self.position = 0;
             self.filled = 0;
         }
-        let (start, chunk) = (self.filled, self.chunk);
+        let chunk = self.chunk;
         // No more room than what is left, when the host knows, and a byte
         // to see the end: a small body takes a small buffer.
         let room = self.left().map_or(chunk, |left| chunk.min(left + 1));
+        if self.position > 0 && self.ahead.len() < self.filled + room {
+            self.ahead.copy_within(self.position..self.filled, 0);
+            self.filled -= self.position;
+            self.position = 0;
+        }
+        let start = self.filled;
         if self.ahead.len() < start + room {
             self.ahead.resize(start + room, 0);
         }
@@ -609,7 +625,7 @@ impl StreamState {
     pub(crate) fn read_line<T>(&mut self, most: usize, make: impl FnOnce(&[u8]) -> T) -> std::io::Result<Option<T>> {
         loop {
             let ahead = &self.ahead[self.position..self.filled];
-            if let Some(end) = ahead.iter().position(|&b| b == b'\n') {
+            if let Some(end) = memchr::memchr(b'\n', ahead) {
                 let line = &ahead[..end];
                 let line = line.strip_suffix(b"\r").unwrap_or(line);
                 if end > most && line.len() > most {
@@ -647,7 +663,7 @@ impl StreamState {
 
     /// Whether nothing is left to read, as the host knows without reading.
     pub(crate) fn ended(&self) -> bool {
-        self.position == self.filled && self.left() == Some(0)
+        self.position == self.filled && (self.memory || self.left() == Some(0))
     }
 
     fn left(&self) -> Option<usize> {
@@ -662,6 +678,7 @@ impl StreamState {
         let end = (self.position + max).min(self.filled);
         out.extend_from_slice(&self.ahead[self.position..end]);
         self.position = end;
+        self.utf8 = false;
         Ok(true)
     }
 
@@ -689,6 +706,13 @@ impl StreamState {
     }
 
     pub(crate) fn close(&mut self) -> std::io::Result<()> {
+        // An in-memory reader closes as every reader does: what it holds
+        // ahead is still given, all of its text here, and then a read
+        // answers `Closed`, as it has no host.
+        if self.memory {
+            self.memory = false;
+            return Ok(());
+        }
         if self.host.is_none() {
             return Ok(());
         }
@@ -726,6 +750,8 @@ pub(crate) unsafe fn stream_in(
         buffered,
         failed: None,
         sized,
+        memory: false,
+        utf8: false,
     };
     unsafe { crate::objects::make(region, StreamObject { rc: AtomicUsize::new(1), mode, state: Mutex::new(state) }) }
 }
@@ -820,6 +846,9 @@ pub(crate) fn run_ready<R: Send + 'static>(
     ready: impl FnOnce(&StreamState) -> bool,
     mut op: impl FnMut(&mut StreamState) -> R + Send,
 ) -> R {
+    if unsafe { (*stream).mode } == Mode::Inline {
+        return op(&mut Shared(stream).state());
+    }
     if let Ok(mut state) = unsafe { (*stream).state.try_lock() }
         && ready(&state)
     {
@@ -838,7 +867,7 @@ impl StreamState {
     /// Whether a whole line was read ahead. A line longer than its bound is
     /// not, and `read_line` refuses it where it waits.
     pub(crate) fn has_line(&self) -> bool {
-        self.ahead[self.position..self.filled].contains(&b'\n')
+        memchr::memchr(b'\n', &self.ahead[self.position..self.filled]).is_some()
     }
 
     /// Whether bytes were read ahead.
@@ -1074,7 +1103,8 @@ pub unsafe extern "C" fn tondo_rt_io_read_line(
 ) -> i64 {
     let (region, most) = (WaitingRegion(region), most.max(0) as usize);
     let line = run_ready(stream, StreamState::has_line, move |s| {
-        s.read_line(most, move |bytes| region.made_text(bytes))?
+        let trusted = s.utf8;
+        s.read_line(most, move |bytes| if trusted { Some(region.made(bytes)) } else { region.made_text(bytes) })?
             .map(|line| line.ok_or_else(|| ErrorKind::InvalidData.into()))
             .transpose()
     });
@@ -1101,8 +1131,20 @@ pub unsafe extern "C" fn tondo_rt_io_read_text(
     out: *mut *mut Str,
     region: *mut crate::regions::Region,
 ) -> i64 {
-    let read = run(stream, |s| utf8(s.read_rest()?));
-    status(read, |text| unsafe { *out = crate::strings::str_in(region, text.as_bytes()) })
+    let region = WaitingRegion(region);
+    let read = run(stream, move |s| {
+        while s.fill()? {}
+        let bytes = &s.ahead[s.position..s.filled];
+        let made = if s.utf8 {
+            Ok(region.made(bytes))
+        } else {
+            region.made_text(bytes).ok_or_else(|| ErrorKind::InvalidData.into())
+        };
+        s.position = 0;
+        s.filled = 0;
+        made
+    });
+    status(read, |text| unsafe { *out = text.0 })
 }
 
 /// `Reader.readBytes()`: the rest, as bytes.
@@ -1123,7 +1165,26 @@ pub unsafe extern "C" fn tondo_rt_io_reader(
     region: *mut crate::regions::Region,
 ) -> *mut StreamObject {
     let bytes = unsafe { str_bytes(&text).to_vec() };
-    unsafe { stream_in(region, Box::new(std::io::Cursor::new(bytes)), Mode::Inline, false) }
+    let filled = bytes.len();
+    let state = StreamState {
+        host: None,
+        ahead: bytes,
+        position: 0,
+        filled,
+        chunk: FIRST_READ,
+        pending: Vec::new(),
+        buffered: false,
+        failed: None,
+        sized: false,
+        memory: true,
+        utf8: true,
+    };
+    unsafe {
+        crate::objects::make(
+            region,
+            StreamObject { rc: AtomicUsize::new(1), mode: Mode::Inline, state: Mutex::new(state) },
+        )
+    }
 }
 
 /// `io.discard()`

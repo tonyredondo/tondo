@@ -1,0 +1,39 @@
+// A reader of a text reads its lines where the text is, and closes as every
+// reader does: the lines it holds ahead are still given after `close()`, and
+// then a read answers `Closed`, the last line too when no `\n` ends it, as a
+// reader cannot tell its end from what it has not read. A read of bytes that
+// stops inside a character leaves a line that is not UTF-8, which `readLine`
+// refuses rather than make a text of it (standard library 10.3).
+import std.console
+import std.io
+
+fn shown(line: String? ! io.IoError): String {
+    match line {
+        ok(some(text)) => text
+        ok(none) => "end"
+        err(e) => "{e}"
+    }
+}
+
+fn main() {
+    let reader = io.reader("one\ntwo\nthree")
+    console.println(shown(reader.readLine()))
+    reader.close().expect("closed")
+    console.println(shown(reader.readLine()))
+    console.println(shown(reader.readLine()))
+    console.println(shown(reader.readLine()))
+    let cut = io.reader("añb\nc")
+    console.println("{cut.read(2).expect("bytes")}")
+    console.println(shown(cut.readLine()))
+    console.println(shown(cut.readLine()))
+    console.println(shown(cut.readLine()))
+}
+
+// expect-stdout: one
+// expect-stdout: two
+// expect-stdout: closed
+// expect-stdout: closed
+// expect-stdout: some([97, 195])
+// expect-stdout: invalid data
+// expect-stdout: c
+// expect-stdout: end
