@@ -311,9 +311,13 @@ pub fn String.split(self, separator: String, limit: Int? = none): Array[String] 
 /// The text before the first `separator` and the text after it, or `none`
 /// when it has none: `"key=a=b".splitOnce("=")` is `some(("key", "a=b"))`.
 pub fn String.splitOnce(self, separator: String): (String, String)? {
-    let at = self.find(separator)?
-    let before = self.slice(0, at) ?? ""
-    let after = (self.slice(at + separator.length(), self.length()) ?? "")
+    let total = self.byteLength()
+    let at = textNative.findIn(self, separator, 0, total)
+    if at < 0 {
+        return none
+    }
+    let before = textNative.between(self, 0, at)
+    let after = textNative.between(self, at + separator.byteLength(), total)
     (before, after)
 }
 
@@ -390,24 +394,18 @@ fn trimmed(text: String, characters: String?, ends: Int): String {
 
 /// The text without `prefix` at its start, if it has it.
 pub fn String.removePrefix(self, prefix: String): String {
-    if not self.startsWith(prefix) {
+    if prefix.isEmpty() or not self.startsWith(prefix) {
         return self
     }
-    match self.slice(prefix.length(), self.length()) {
-        ok(rest) => rest
-        err(_) => self
-    }
+    textNative.between(self, prefix.byteLength(), self.byteLength())
 }
 
 /// The text without `suffix` at its end, if it has it.
 pub fn String.removeSuffix(self, suffix: String): String {
-    if not self.endsWith(suffix) {
+    if suffix.isEmpty() or not self.endsWith(suffix) {
         return self
     }
-    match self.slice(0, self.length() - suffix.length()) {
-        ok(rest) => rest
-        err(_) => self
-    }
+    textNative.between(self, 0, self.byteLength() - suffix.byteLength())
 }
 
 /// The scalar index of the last `needle`.

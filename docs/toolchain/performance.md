@@ -221,7 +221,7 @@ stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in 
 stats.to:19:5: `"{sensor}: {value:.1}"` goes in a region of `main` (in main)
 stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
 stats.to:19:17: `value` in `formats.formatNumber`, `formatText("{sign}{prefix}{digits}", -1, width, f…` stays a call of `formats.formatText`: its body costs 73, more than the 31 inlining takes; 2 places in it make values in regions of its own and 4 in the region its caller gives (in label)
-stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 31 inlining takes; 6 places in it make values in regions of its own and 6 in the region its caller gives (in main)
+stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 70, more than the 31 inlining takes; 6 places in it make values in regions of its own and 6 in the region its caller gives (in main)
 stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{digits}"` is made on the heap: it is passed to a call that may keep it (in label)
 stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{zeros}{digits}"` is made on the heap: something else is assigned to it (in label)
 stats.to:19:17: `value` is inlined: the body of `formats.formatFloat` is copied here (in label)

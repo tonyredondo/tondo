@@ -1,0 +1,34 @@
+// std.url percent-encodes by bytes: a part with nothing to encode comes back
+// as it is, and every byte outside the unreserved characters, the
+// sub-delimiters and the part's own is `%XX` in capitals, a digit outside
+// ASCII too, which is no digit of RFC 3986. A scheme is an ASCII letter, then
+// ASCII letters, digits, `+`, `-` and `.` (standard library 14.28).
+// `splitOnce`, `removePrefix` and `removeSuffix` cut texts of several bytes
+// at the seams of their characters.
+import std.console
+import std.url
+
+fn main() {
+    let read = url.parse("https://h/%C3%B1/%D9%A3/a%20b/x:y@z,(~)").expect("a URL")
+    console.println(read.path)
+    console.println(read.escapedPath())
+    console.println(url.parse("https://h/plain/path").expect("a URL").escapedPath())
+    console.println(url.parse("svn+ssh.1-2://h/").expect("a URL").scheme)
+    console.println("{url.parse("h٣://h/").isOk()}")
+    console.println("{"añb=c=d".splitOnce("=")}")
+    console.println("{"a→b→c".splitOnce("→")}")
+    console.println("{"abc".splitOnce("→")}")
+    console.println(
+        "{"ñx".removePrefix("ñ")} {"aé".removeSuffix("é")} {"ñ".removePrefix("")} {"ñ".removeSuffix("ññ")}",
+    )
+}
+
+// expect-stdout: /ñ/٣/a b/x:y@z,(~)
+// expect-stdout: /%C3%B1/%D9%A3/a%20b/x:y@z,(~)
+// expect-stdout: /plain/path
+// expect-stdout: svn+ssh.1-2
+// expect-stdout: false
+// expect-stdout: some((añb, c=d))
+// expect-stdout: some((a, b→c))
+// expect-stdout: none
+// expect-stdout: x a ñ ñ
