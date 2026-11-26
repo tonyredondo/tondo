@@ -440,7 +440,7 @@ pub extern "C" fn tondo_rt_pb_read_text(object: *mut NativeObject, region: *mut 
     }
     let Some(length) = r.varint() else { return crate::strings::str_in(region, b"") };
     let bytes = r.take(length as usize).unwrap_or(&[]);
-    if std::str::from_utf8(bytes).is_ok() {
+    if simdutf8::basic::from_utf8(bytes).is_ok() {
         crate::strings::str_in(region, bytes)
     } else {
         r.fail("a string is not UTF-8");

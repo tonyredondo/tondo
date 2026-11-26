@@ -10468,3 +10468,32 @@ the divisibility by an inverse; run again, both measures were kept. The
 Nightly runs it twice over the last change to the compiler, the second
 run taking every measure from the cache. Left out until asked: the MCP
 server's `test` tool, and the compile times of each step.
+
+## Text is checked for UTF-8 a vector at a time
+
+Where the runtime makes text of bytes it was given, a file, a stream, a
+process's output, CBOR, protobuf, JSON, a URL's bytes or
+`String.fromBytes`, it checks them with simdutf8 0.1.5, MIT or
+Apache-2.0, rather than with Rust's own validator, a byte or a few at a
+time: AVX2 or SSE 4.2 on x86, chosen as the program runs, NEON on
+aarch64, simd128 on wasm32, and Rust's own elsewhere.
+
+No row of bench/ read a large text whole. Three that do were added on the
+maintainer's word of 2026-11-26, each about a mebibyte, and they decide
+it. Measured in the environment of 55 variables, two rounds each, with
+main's tondo and with the piece's before and after this change; Go in
+six samples, whose collector, with a mebibyte allocated at each run,
+moves its time from one run to the next:
+
+| Row | Before | With simdutf8 | Go |
+|---|---:|---:|---:|
+| texts/fromBytes ascii | 32.3 µs, 563.9k instructions | 24.4 µs, 252.6k | 35.0 to 58.8 µs |
+| texts/fromBytes other | 486.8 µs, 11.41M | 60.7 µs, 972.9k | 52.3 to 73.2 µs |
+| files/readText | 538.0 µs, 11.42M | 117.8 µs, 983.0k | 140.3 to 236.5 µs |
+
+Without it, the text of other scripts takes seven to nine times Go's time
+and the file two to four; with it both are at or under Go's. Three of the
+places then take the bytes as text unchecked, so
+`simdutf8_answers_as_std_does` holds simdutf8 to Rust's validator both
+ways, at every place of a block of 64 bytes, across a block's end and the
+text's, among characters of one to four bytes.

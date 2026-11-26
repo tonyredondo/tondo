@@ -1143,7 +1143,7 @@ pub unsafe extern "C" fn tondo_rt_process_output(
     // The text of standard output, and no arrays of the output.
     let Some(captured) = captured else { return INVALID_DATA };
     let captured = captured.lock().unwrap_or_else(|e| e.into_inner());
-    let Ok(text) = std::str::from_utf8(&captured.stdout) else { return INVALID_DATA };
+    let Ok(text) = simdutf8::basic::from_utf8(&captured.stdout) else { return INVALID_DATA };
     let text = text.trim_end_matches(['\n', '\r']);
     unsafe {
         *out = if check == 3 {
@@ -1431,7 +1431,7 @@ pub unsafe extern "C" fn tondo_rt_process_text(
     out: *mut *mut Str,
     region: *mut crate::regions::Region,
 ) -> i64 {
-    let text = std::str::from_utf8(unsafe { array_items::<u8>(bytes) });
+    let text = simdutf8::basic::from_utf8(unsafe { array_items::<u8>(bytes) });
     crate::status(text, |_| INVALID_DATA, |text| unsafe { *out = crate::strings::str_in(region, text.as_bytes()) })
 }
 

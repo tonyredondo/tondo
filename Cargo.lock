@@ -2518,6 +2518,7 @@ dependencies = [
  "saphyr-parser",
  "sha1",
  "sha2",
+ "simdutf8",
  "socket2",
  "tokio",
  "tokio-rustls",

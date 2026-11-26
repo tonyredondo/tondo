@@ -1029,4 +1029,64 @@ mod tests {
             assert_eq!(cased(sample, false), sample.to_lowercase(), "lower {sample:?}");
         }
     }
+
+    /// simdutf8, which validates UTF-8 at nine places of the runtime and
+    /// three of them then take as text unchecked, refuses what Rust's own
+    /// validator refuses and accepts what it accepts: each shape that
+    /// matters, at every place of a block of 64 bytes, across the end of a
+    /// block and of the text, and among characters of several bytes.
+    #[test]
+    fn simdutf8_answers_as_std_does() {
+        let shapes: &[&[u8]] = &[
+            // A continuation alone, and a lead cut short.
+            b"\x80",
+            b"\xbf",
+            b"\xc3",
+            b"\xe2\x82",
+            b"\xf0\x9f\x98",
+            // Overlong forms.
+            b"\xc0\x80",
+            b"\xc1\xbf",
+            b"\xe0\x80\x80",
+            b"\xe0\x9f\xbf",
+            b"\xf0\x80\x80\x80",
+            b"\xf0\x8f\xbf\xbf",
+            // Surrogates, and past U+10FFFF.
+            b"\xed\xa0\x80",
+            b"\xed\xbf\xbf",
+            b"\xf4\x90\x80\x80",
+            b"\xf5\x80\x80\x80",
+            b"\xf8\x88\x80\x80\x80",
+            b"\xff",
+            // The edges that are valid.
+            b"\xc2\x80",
+            b"\xdf\xbf",
+            b"\xe0\xa0\x80",
+            b"\xed\x9f\xbf",
+            b"\xee\x80\x80",
+            b"\xef\xbf\xbf",
+            b"\xf0\x90\x80\x80",
+            b"\xf4\x8f\xbf\xbf",
+        ];
+        for fill in ["a", "\u{e9}", "\u{65e5}", "\u{1f600}"] {
+            for length in [16, 63, 64, 65, 127, 128, 129, 200] {
+                // Whole characters, then ASCII to the length: valid itself.
+                let mut base = fill.repeat(length / fill.len()).into_bytes();
+                base.resize(length, b'a');
+                assert!(std::str::from_utf8(&base).is_ok());
+                for shape in shapes {
+                    for at in (0..=length).filter(|&at| std::str::from_utf8(&base[..at]).is_ok()) {
+                        let mut bytes = base[..at].to_vec();
+                        bytes.extend_from_slice(shape);
+                        bytes.extend_from_slice(&base[at..]);
+                        assert_eq!(
+                            simdutf8::basic::from_utf8(&bytes).is_ok(),
+                            std::str::from_utf8(&bytes).is_ok(),
+                            "{shape:x?} at {at} of {length} among {fill:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

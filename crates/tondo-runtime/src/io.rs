@@ -1065,7 +1065,11 @@ fn status<T>(result: std::io::Result<T>, store: impl FnOnce(T)) -> i64 {
 }
 
 pub(crate) fn utf8(bytes: Vec<u8>) -> std::io::Result<String> {
-    String::from_utf8(bytes).map_err(|_| ErrorKind::InvalidData.into())
+    if simdutf8::basic::from_utf8(&bytes).is_ok() {
+        Ok(unsafe { String::from_utf8_unchecked(bytes) })
+    } else {
+        Err(ErrorKind::InvalidData.into())
+    }
 }
 
 /// A string of the program's, which an operation may make on a thread of
@@ -1086,7 +1090,7 @@ impl WaitingRegion {
     /// `bytes` as a string of the program's in the region, or on the heap
     /// when it is null, if they are UTF-8.
     pub(crate) fn made_text(self, bytes: &[u8]) -> Option<Made> {
-        std::str::from_utf8(bytes).is_ok().then(|| self.made(bytes))
+        simdutf8::basic::from_utf8(bytes).is_ok().then(|| self.made(bytes))
     }
 
     /// `bytes`, UTF-8 already, as a string of the program's in the region.

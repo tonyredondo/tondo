@@ -192,7 +192,7 @@ pub unsafe extern "C" fn tondo_rt_url_check(input: *const Str) -> i64 {
         return -1;
     }
     match url_decode(text(&input)) {
-        Ok(decoded) if std::str::from_utf8(&decoded).is_ok() => -1,
+        Ok(decoded) if simdutf8::basic::from_utf8(&decoded).is_ok() => -1,
         Ok(_) => -2,
         Err(offset) => offset as i64,
     }
