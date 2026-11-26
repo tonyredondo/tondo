@@ -58,6 +58,25 @@ It is saved again only with a new table, in that table's commit, never
 with another change, which would make it follow the drift it is there to
 catch; measured on another machine, it compares nothing.
 
+A change to the compiler is measured against the `tondo` of its base,
+`--compiler <revision>`, which `tondo compiler` builds once and keeps with
+the record of its build: the revision, the sha256 of the executable, and
+that cargo built it. Each use checks the record against the bytes, and an
+entry without one builds again. A comparison says each side's revision and
+sha256 first, and stops when both are one executable, which measures
+nothing, unless `--same`: two revisions that differ outside `crates/`,
+`vendor/` and `Cargo.*` build the same `tondo`. A measure that runs for
+hours goes so:
+
+- Its script runs first on one row of each phase, and the long run starts
+  only once every phase wrote its result and ended well.
+- A commit measured alone against its parent has a `tondo` of its own when
+  it changes `crates/`, `vendor/` or `Cargo.*`: the two sha256s differ, or
+  the measure is void before it runs. `tondo asm --all --compiler <parent>`
+  over `bench/tondo` then names the functions it changed; "the same code"
+  with two executables is a change of where code lies or of the runtime.
+- Each result starts with both sides' revisions and sha256s.
+
 This table was measured on an AMD Ryzen 9 5950X, Linux, with Go 1.27, on
 2026-11-19 at 25ff8924, each side for its default level of processor:
 Tondo's `baseline`, x86-64-v2, and Go's `GOAMD64=v1`, as the tables of
