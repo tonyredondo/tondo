@@ -765,11 +765,11 @@ fn wideUnits(text: String, name: String): Array[UInt16] {
         }
         // Each unit is below 0x10000.
         if code < 0x10000 {
-            units.push(UInt16(code) ?? 0u16)
+            units.push(UInt16.wrapping(code))
         } else {
             let above = code - 0x10000
-            units.push(UInt16(0xD800 + above / 0x400) ?? 0u16)
-            units.push(UInt16(0xDC00 + above % 0x400) ?? 0u16)
+            units.push(UInt16.wrapping(0xD800 + (above >> 10)))
+            units.push(UInt16.wrapping(0xDC00 + (above & 0x3FF)))
         }
     }
     units

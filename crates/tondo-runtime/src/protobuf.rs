@@ -418,34 +418,33 @@ pub extern "C" fn tondo_rt_pb_read_fixed64(object: *mut NativeObject) -> i64 {
     r.take(8).map_or(0, |b| i64::from_le_bytes(b.try_into().unwrap_or([0; 8])))
 }
 
-fn read_length(object: *mut NativeObject) -> Vec<u8> {
-    let Some(mut r) = reader(object) else { return Vec::new() };
-    if !r.expect(LENGTH, "a length-delimited value") {
-        return Vec::new();
-    }
-    let Some(length) = r.varint() else { return Vec::new() };
-    r.take(length as usize).map(<[u8]>::to_vec).unwrap_or_default()
-}
-
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_pb_read_bytes(
     object: *mut NativeObject,
     region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
-    crate::arrays::byte_array_in(region, &read_length(object))
+    let Some(mut r) = reader(object) else { return crate::arrays::byte_array_in(region, &[]) };
+    if !r.expect(LENGTH, "a length-delimited value") {
+        return crate::arrays::byte_array_in(region, &[]);
+    }
+    let Some(length) = r.varint() else { return crate::arrays::byte_array_in(region, &[]) };
+    let bytes = r.take(length as usize).unwrap_or(&[]);
+    crate::arrays::byte_array_in(region, bytes)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_pb_read_text(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
-    let bytes = read_length(object);
-    match std::str::from_utf8(&bytes) {
-        Ok(text) => crate::strings::str_in(region, text.as_bytes()),
-        Err(_) => {
-            if let Some(mut r) = reader(object) {
-                r.fail("a string is not UTF-8");
-            }
-            crate::strings::str_in(region, b"")
-        }
+    let Some(mut r) = reader(object) else { return crate::strings::str_in(region, b"") };
+    if !r.expect(LENGTH, "a length-delimited value") {
+        return crate::strings::str_in(region, b"");
+    }
+    let Some(length) = r.varint() else { return crate::strings::str_in(region, b"") };
+    let bytes = r.take(length as usize).unwrap_or(&[]);
+    if std::str::from_utf8(bytes).is_ok() {
+        crate::strings::str_in(region, bytes)
+    } else {
+        r.fail("a string is not UTF-8");
+        crate::strings::str_in(region, b"")
     }
 }
 

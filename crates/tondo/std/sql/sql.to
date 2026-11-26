@@ -269,10 +269,14 @@ fn nested(query: Query): Piece {
 /// A value interpolated in a literal: a parameter, or the list of an
 /// array's.
 fn bound[T: __serialization.Encode](value: T): Piece {
-    let sink = Capture { values: __sync.Mutex([]), listed: __sync.Mutex(false) }
+    let sink = Capture { state: __sync.Mutex(CaptureState { values: [], listed: false }) }
     value.encode(sink)
-    let values = sink.values.get()
-    if sink.listed.get() { Piece.Listed(values) } else { Piece.Bound(values.get(0) ?? Value.Null) }
+    let state = sink.state.get()
+    if state.listed {
+        Piece.Listed(state.values)
+    } else {
+        Piece.Bound(state.values.get(0) ?? Value.Null)
+    }
 }
 
 /// Bytes interpolated in a literal: one parameter, not a list of numbers.
@@ -287,14 +291,18 @@ fn boundOptionalBytes(bytes: Array[Byte]?): Piece {
     }
 }
 
+type CaptureState = {
+    values: Array[Value]
+    listed: Bool
+}
+
 /// The values a value encodes to: one scalar, or a list's.
 type Capture = {
-    values: __sync.Mutex[Array[Value]]
-    listed: __sync.Mutex[Bool]
+    state: __sync.Mutex[CaptureState]
 }
 
 fn Capture.put(self, value: Value) {
-    self.values.update(values => values.push(value))
+    self.state.update(state => state.values.push(value))
 }
 
 impl __serialization.Sink for Capture {
@@ -334,7 +342,11 @@ impl __serialization.Sink for Capture {
     }
 
     fn beginList(self, _count: Int) {
-        self.listed.set(true)
+        self.state.update(
+            (state) {
+                state.listed = true
+            },
+        )
     }
 
     fn endList(self) {}
