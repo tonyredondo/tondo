@@ -10173,3 +10173,261 @@ the one of 26,035 took 7.8 s; with this one they take 34.9 s and 4.2 s.
 The watchdog of tests.sh now writes, before it ends a binary, each
 thread's call and wait and the open files of every process of its tree,
 which is what told the computing worker from the waiting ones here.
+
+## A revision's tondo is built from its own code, and a comparison names both
+
+`tondo compiler <revision>` built every revision in one target, from a
+tree `git archive` wrote with the commit's times, so cargo could find a
+revision older than the last one it built already made and give that
+tondo for it: three revisions of piece 1's series were one executable,
+and the measures that compared them compared nothing. A revision's files
+are now made newer than any build before cargo runs, cargo's word that
+the executable was already made for another revision is refused, and
+each tondo kept in the cache has the record of its build, its revision
+and sha256, checked at every use: one without it is built again. A
+comparison with another tondo, in `tondo test --bench`, `tondo asm`,
+`tondo optimizations` and bench/compile's `--old`, first says which two
+it compares, by revision and sha256, and refuses one tondo against
+itself unless `--same` asks for it; the report of a measure keeps both
+sha256s. The Nightly builds the revision before the last change to what
+a release build reads, then HEAD, then that revision again in the same
+cache, and fails if the last build is not the first, byte for byte, or
+is HEAD's; a pair that builds the same tondo is passed over for an older
+one, three times at most. bench/README.md says how a long measure of the
+compiler goes, the identities first.
+
+Of the tondos kept before, those of 5dd3268a, 03c77299 and 57ba41c7
+were the same bytes as their builds in a fresh target. Numbers recorded
+before 2026-11-26 against a base other than those three cannot be
+checked by their executables.
+
+## Piece 1 of another session's speed work goes in by its parts
+
+The compiler's and the code generator's part of pull request 51 goes to
+main as eighteen commits over 4e16e54e: thirteen changes of the code, each
+with the case or the test that holds what it does, the mend of the dump
+table one of them made slower to write, two pages and a case whose
+listings the changes moved, the test owed for cases without regions, and
+bench/compile's check of the clock. Each change is weighed below; this is
+the whole, measured against main with both tondos built fresh by the tool
+of the entry above (head b5530f8b, sha256 6b7e16d4…; base 4e16e54e,
+sha256 9d61ffbc…), every row checking its answer on both sides.
+
+Of the 90 rows of bench/tondo and the examples, in four orders of the
+functions each, 23 are faster and none slower. 26 run at least 1% fewer
+instructions: `chars other` 61.9% fewer, `numbers iter map filter sum`
+41.7%, `iter filter sumBy` 30.3%, `sum lines` 23.1%, `countBy` 19.7%,
+`parse object` 17.6%, `parse 1000 numbers` 16.6%, the two `map filter
+sum` rows 13.4%, `build tree` and `groupBy` 12.6%, `count words` 12.5%;
+of the examples, warehouse 7.6%, sitegen 6.4%, kvstore 5.9% and chat
+5.3%. None runs more than 0.8% more (`spawn 1000`). The executables of the
+examples are 1.26% smaller, the runtime's code is the same in its 1961
+functions, and the generated projects build with 2.8 to 3.5% fewer
+instructions in the same time. `chars ascii` runs as on main, 10.0k
+instructions: the gain of the way laid out apart is lost to a copy
+regalloc2 puts on the loop's way back, which is step 3's first piece.
+
+Against Go, on default builds in the environment of 55 variables
+bench/README.md gives, 65 of 77 rows are at or under Go's time, where the
+table at 25ff8924 had 59 of 75, and the five rows behind that the piece
+moved are under it now: the two lazy chains, the characters other than
+ASCII, `countBy` and `count words`. A build's parts grow with the
+generated project as on main, IR 9.4× for 7.7× the lines against main's
+9.5× over three builds each; the MIR's passes take 3 to 6% longer with
+what the piece adds to them, and grow no faster.
+
+## Checks for cancellation that inlining leaves with no wait before go
+
+When inlining opens an iterator's adapter in one round and the closures
+it calls in a later one, the check for a cancellation after the outer
+call stayed, though nothing that waits was left before it. Which
+functions may wait is worked out again after inlining, and a check that
+no wait reaches is dropped and said at its call, as the remark that names
+a check dropped (`unchecked`), which `cancelled_checks_dropped.to` holds.
+
+## `prove` moves a range by a step it bounds
+
+A local that grows by a value whose bounds `prove` knows, as a UTF-8 step
+of 1 to 4, kept no facts after the step: only a constant step moved them.
+The facts now move by the step's bounds, each side by its own, and a
+text's byte length is bounded by what its allocation leaves past its
+header, the largest integer less 16, so a count of a text's characters
+cannot overflow. `checks_say_why.to` holds it, and the guide's page on
+performance and the case of the library's code at the call were written
+again, as the checks they showed went.
+
+## A map's entries and length are read in line
+
+The entry a key found, the entry a loop is at and a map's length were
+each a call of the runtime, and so was the check that a map is the only
+reference before one of its entries changes in place: two calls at each
+`counts[word, default: 0] += 1` besides finding the key. The code reads
+them where `MapObject` keeps them, whose offsets the runtime asserts at
+compile time, and checks the count as for an array, calling the runtime
+only to copy a shared map. `map_entries.to` holds a shared map, a map
+inside another and a `var` parameter.
+
+## A checked count chooses what it adds
+
+A loop that adds to a total on some turns only, as a filter followed by a
+sum, kept a branch on the data each turn. Adding zero never overflows, so
+`if cond { total += value }` adds `value` or zero, chosen with a
+`select`, and the check runs every turn without failing where the way that
+adds would not have run. This narrows the first choices' rule that a way
+computing nothing beside one that checks stays a branch: for an addition
+or subtraction into a value from before the branch, the check costs
+nothing more as a choice. The ways are also followed through blocks with
+parameters one way reaches, as the e-graph leaves them, past pure values
+nothing uses, through up to 24 blocks, and a pure value both ways compute
+is taken once. Measured alone, the head against the head without it,
+both fresh: `numbers iter map filter sum` 20.0% fewer instructions and
+`iter filter sumBy` 2.9%, nothing else beyond 0.8%.
+`select_accumulations.to` holds what a choice must keep.
+
+## A way that calls is laid out after the rest
+
+A branch whose next block starts a way that calls, and whose other way
+calls nothing, jumped over the calling way on the path that calls
+nothing: the ASCII path of `String.chars` took a jump each character to
+skip the decoding of the others. Such a way, reached from the branch
+alone and coming back to where the other goes, is now laid out after the
+function's blocks that are not cold; never the entry, nor a target of an
+indirect jump, nor a way a cold block comes back into. The ranges where a
+dump, a logpoint or a breakpoint finds a value were computed in the order
+of the blocks and are now computed block by block: a logpoint on a line
+of such a way read nothing, which `a_logpoint_reads_a_way_laid_out_apart`
+holds. A call is what `MachInst::is_real_call` says, so a patchable site
+is not one.
+
+## Functions lie after their callers
+
+With no `TONDO_LAYOUT_SEED`, a Release build lays each function after the
+first that calls it, depth first from `main`, then the program's other
+functions and the glue: the same order for the same program, where the
+order of numbering put a function far from what it calls and moved every
+function after one that was added. A seed gives an order of its own, so
+`--layouts` measures the code without this order, and the order is judged
+on default builds. Without the alignment below it lost: 6 rows faster and
+18 slower, `chars ascii` 63% slower. With it, the default builds of the
+head with and without the order: 11 faster, 8 slower, the median time
+0.3% lower, and the head's default build inside or under the spread of
+four random orders of the build without it on 66 of 78 rows, where that
+build's own default sits on 55. The one row that stayed behind,
+`broadcast 256` at 11.6 µs against 10.3–10.5, runs the same cycles on
+both sides and has two speeds by the core's clock, which both builds show
+pinned to one core: not the order's. The order made the dump table
+slower to write, which the entry on that table below mends.
+`a_release_build_lays_a_function_after_its_caller` holds the order.
+
+## A release after a move on every way goes
+
+A loop that took the text out of an option, a result or a record each
+turn still released the local it came from, a call that found zero. A
+release build drops the release of a local whose whole value, or its one
+counted part, moved out on every way to the release with nothing written
+to it since, and the zero the move wrote when nothing reads the local
+after. It is sound for what writes a local in the MIR: no terminator
+does, a `var` argument goes through a loan the analysis stops following,
+a boxed part sits inside an inline value so the local is never the box,
+and a reload of a frame forgets all. Measured alone, both fresh: `sum
+lines` 23.1% fewer instructions, `parse object` 17.6%, `parse 1000
+numbers` 16.6%, `build tree` 13.0%, `reprice order` 9.7%, `decode
+struct` 9.1%, `decode 100 structs` 4.1%, `json 64x100` 3.0%; `groupBy`
+1.1% more. The cases run with regions, where a release the pass should
+have kept leaks nothing the leaks' check sees: a mutant that took one of
+two counted fields for the only one passed `moved_released.to` and failed
+it built without regions, as a test now builds it. Every case built
+without regions under the leaks' check is owed as a test of its own.
+
+## A text's characters are decoded in line
+
+A character of more than one byte was a call of the runtime, and the
+iterator then decoded it again to learn how far to step. The code decodes
+two, three and four bytes where it reads them, as a `String` always holds
+valid UTF-8, and leaves the runtime a short text's characters and an
+offset inside one; `CharIterator` steps by the first byte alone.
+`chars_in_place.to` holds the first and last scalar of each width.
+
+## Pure values nothing reads go
+
+Inlining and splitting leave values nothing reads, as a field of a split
+record the code never uses or the character a loop that only counts is
+given, each with its instructions, a decoding among them. After `split`
+and `borrowed`, a release build drops the assignments of locals nothing
+reads, retains, releases, lends or returns, when what they compute cannot
+fail or act. A binding the program named, a parameter, what a dump or a
+breakpoint shows of an inlined call, and a function with points of a live
+build stay as they are. Measured alone, both fresh: `chars other` 34.0%
+fewer instructions; `chars ascii` 12.3% more, the same MIR but for two
+dead values, as the count needs a register that survives the exit's
+release call and regalloc2 copies it on the loop's way back, where the
+decoding's cold call kept it in one before. That copy is step 3's first
+piece: regalloc2 is not Tondo's copy, and the exit's call could keep the
+registers instead. `a_loop_that_reads_no_character_decodes_none` holds
+it from the machine code.
+
+## Two tests of a range are one
+
+`i < 0 or i >= n`, as the iterators' bounds test an index, was two
+comparisons and two branches. When the second leaves the same way as the
+first and `prove` knows the bound is not negative, the two are one
+comparison of `i` without its sign, as a negative `i` is past every bound
+then. What `prove` showed past them still holds, being reached only when
+`0 <= i < bound`. The dump of the MIR marks the comparison unsigned and
+says where it fused. A bound proven not negative by an early return, as
+in `inside(i, limit)`, does not fuse yet.
+
+## A product by 2 is checked by its addition's flag
+
+A checked product by a constant tests the other factor against the range
+whose products fit, which on x86-64 needs both ends as constants of 64
+bits. By 2 the factor added to itself gives the product and, by its
+flag, whether it overflowed. The panic's message names the factor as
+before, found again on the cold path. It is built where the compiler
+chooses how a product by a constant is checked, not as a `Tondo:` rule:
+the test of the range is the compiler's own construction, and the e-graph
+rewrites no instruction of two results. `doubled_overflow.to` holds each
+side, sign and end of `Int`, `UInt` and `Int32`.
+
+## Divisibility by a constant is tested by its inverse
+
+`x % d == 0` by a constant that is not a power of two computed the
+remainder to compare it with zero. It is now a product by the inverse of
+`d`'s odd part, a rotation by its power of two and one comparison, signed
+or not, for `Int`, `UInt` and the integers of 32 bits; the remainder is
+still computed for any other use. A division or a remainder by a constant
+other than zero, or other than -1 when signed, no longer tests the
+divisor for zero nor the dividend for the least value. A unit test holds
+the inverses, and `divisible_by_constant.to` every answer against
+`x / d * d == x` over a range and at the ends of each type. With the
+product by 2, it gives the two `map filter sum` rows their 13.4%.
+
+## The dump table lists functions in the order they were declared
+
+The dump table, deflated as only a dump reads it, listed the functions in
+the order they lie in, after their callers since the order above: the
+copies of a generic function no longer sat together and deflate searched
+longer for shorter matches. On a project of 25,022 lines the part that
+writes the object, on one thread, took 735 ms where it took 575, and the
+build 3.6% longer by the clock with fewer instructions. The table lists
+them in the order they were declared, by their numbers in the trace table,
+by which a dump reads them. bench/compile's `--old` now names the build
+rows whose clock grew more than 3 points over their instructions, with
+the parts that grew, and fails when a part grew in both larger projects:
+tried against the series without this mend, it named the four rows and
+`object`, 25 to 29% longer.
+
+## Functions and loops start on 32 bytes
+
+Where a short loop lay decided its speed: one whose turn crossed a line
+of 32 bytes was fetched in two, and a change anywhere moved every loop
+after it. A Release build starts each function on 32 bytes, and the first
+block of each loop that is not cold, padding the code before it with
+no-ops that a jump most often skips. Measured with and without it, both
+fresh, in four orders of the functions each: no row faster and one
+slower, the profiler example by 6.3% with level instructions; 7 rows of
+89 spread more than 10% over the four orders against 11 without it, and
+17 more than 5% against 26, the median spread 2.4% against 2.8%; the
+examples' executables 0.22% larger. It goes in for the spread, which is
+what a measure of a change can trust, and the order above needs it.
+`a_release_loop_starts_on_32_bytes` holds a loop's jump back on 32 bytes.
