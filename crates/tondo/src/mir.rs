@@ -822,17 +822,24 @@ pub fn written(body: &Body) -> Vec<Option<Option<Span>>> {
     written
 }
 
-/// The locals each block's end finds assigned on every path to it, from
-/// `given`, as a program's parameters.
-pub fn assigned_at_end(blocks: &[BlockData], given: &[Local], locals: usize) -> Vec<Vec<bool>> {
-    let writes: Vec<Vec<Local>> = blocks
+/// Which of `kept` each block's end finds assigned on every path to it,
+/// from `given`, as a program's parameters: a bit for each, in `kept`'s
+/// order, the first 64. Only those are followed, so that a function costs
+/// its blocks and statements, and not those times all its locals.
+pub fn assigned_at_end(blocks: &[BlockData], given: &[Local], kept: &[Local], locals: usize) -> Vec<u64> {
+    let mut bit = vec![0u64; locals];
+    for (index, local) in kept.iter().enumerate().take(64) {
+        bit[local.0 as usize] = 1 << index;
+    }
+    let bits = |locals: &[Local]| locals.iter().fold(0, |mask, local| mask | bit[local.0 as usize]);
+    let writes: Vec<u64> = blocks
         .iter()
         .map(|block| {
             let (mut used, mut defined) = (Vec::new(), Vec::new());
             for statement in &block.stmts {
                 statement_locals(statement, &mut used, &mut defined);
             }
-            defined
+            bits(&defined)
         })
         .collect();
     let mut before: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
@@ -846,18 +853,18 @@ pub fn assigned_at_end(blocks: &[BlockData], given: &[Local], locals: usize) -> 
             _ => {}
         }
     }
-    let mut assigned = vec![vec![true; locals]; blocks.len()];
+    let entry = bits(given);
+    let mut assigned = vec![u64::MAX; blocks.len()];
     let mut changed = true;
     while changed {
         changed = false;
         for index in 0..blocks.len() {
-            let mut now = vec![false; locals];
-            if index == 0 {
-                given.iter().for_each(|local| now[local.0 as usize] = true);
-            } else if !before[index].is_empty() {
-                now = (0..locals).map(|local| before[index].iter().all(|&b| assigned[b][local])).collect();
-            }
-            writes[index].iter().for_each(|local| now[local.0 as usize] = true);
+            let reached = match index {
+                0 => entry,
+                _ if before[index].is_empty() => 0,
+                _ => before[index].iter().fold(u64::MAX, |mask, &b| mask & assigned[b]),
+            };
+            let now = reached | writes[index];
             if now != assigned[index] {
                 assigned[index] = now;
                 changed = true;
@@ -1039,5 +1046,99 @@ mod tests {
         let calls = include_str!("codegen/calls.rs");
         assert!(hir::IN_ONE_INSTRUCTION.iter().all(|symbol| calls.contains(&format!("\"{symbol}\" =>"))));
         assert!(hir::IN_PLACE.iter().all(|symbol| calls.contains(&format!("symbol == \"{symbol}\""))));
+    }
+
+    /// The analysis as it was, over every local, which took each block
+    /// times each local at every panic of a function: the masks of
+    /// `assigned_at_end` must give its answer for the locals they follow.
+    fn assigned_by_every_local(blocks: &[BlockData], given: &[Local], locals: usize) -> Vec<Vec<bool>> {
+        let writes: Vec<Vec<Local>> = blocks
+            .iter()
+            .map(|block| {
+                let (mut used, mut defined) = (Vec::new(), Vec::new());
+                for statement in &block.stmts {
+                    statement_locals(statement, &mut used, &mut defined);
+                }
+                defined
+            })
+            .collect();
+        let mut before: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
+        for (index, block) in blocks.iter().enumerate() {
+            for next in successors(&block.terminator) {
+                before[next].push(index);
+            }
+        }
+        let mut assigned = vec![vec![true; locals]; blocks.len()];
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for index in 0..blocks.len() {
+                let mut now = vec![false; locals];
+                if index == 0 {
+                    given.iter().for_each(|local| now[local.0 as usize] = true);
+                } else if !before[index].is_empty() {
+                    now = (0..locals).map(|local| before[index].iter().all(|&b| assigned[b][local])).collect();
+                }
+                writes[index].iter().for_each(|local| now[local.0 as usize] = true);
+                if now != assigned[index] {
+                    assigned[index] = now;
+                    changed = true;
+                }
+            }
+        }
+        assigned
+    }
+
+    /// What each block's end finds assigned, by the masks and by every
+    /// local, agree: at a join where one way assigns, in a loop whose way
+    /// back reaches the block before the assignment, for a parameter given
+    /// at the entry, in blocks nothing reaches, and for the first 64 of
+    /// more kept locals, beyond which no bit is set.
+    #[test]
+    fn the_kept_locals_assigned_at_a_block_end_are_those_of_every_local() {
+        let assign = |local: u32| {
+            let one = Rvalue::Use(Operand::Const(Const::Int(1, Ty::INT)));
+            Statement::Assign(Place::local(Local(local)), Box::new(one), Span::default())
+        };
+        let block = |locals: &[u32], terminator: Terminator| BlockData {
+            stmts: locals.iter().map(|&local| assign(local)).collect(),
+            terminator,
+        };
+        let goto = |to: u32| Terminator::Goto(BlockId(to));
+        let branch = |then: u32, otherwise: u32| {
+            Terminator::Branch(Operand::Const(Const::Bool(true)), BlockId(then), BlockId(otherwise))
+        };
+        let end = || Terminator::Return(Operand::Const(Const::Unit));
+        let agree = |blocks: &[BlockData], given: &[u32], kept: &[u32], locals: usize| -> Vec<u64> {
+            let given: Vec<Local> = given.iter().map(|&local| Local(local)).collect();
+            let kept: Vec<Local> = kept.iter().map(|&local| Local(local)).collect();
+            let every = assigned_by_every_local(blocks, &given, locals);
+            let masks = assigned_at_end(blocks, &given, &kept, locals);
+            for (index, mask) in masks.iter().enumerate() {
+                for (bit, local) in kept.iter().enumerate().take(64) {
+                    assert_eq!(mask & 1 << bit != 0, every[index][local.0 as usize], "block {index}, l{}", local.0);
+                }
+            }
+            masks
+        };
+        // A join: one way assigns l1, the other does not; l2 is assigned
+        // before the branch.
+        let join = [block(&[2], branch(1, 2)), block(&[1], goto(3)), block(&[], goto(3)), block(&[], end())];
+        assert_eq!(agree(&join, &[], &[1, 2], 3), [0b10, 0b11, 0b10, 0b10]);
+        // A loop whose head is reached back from the block that assigns.
+        let looping = [block(&[], goto(1)), block(&[], branch(2, 3)), block(&[1], goto(1)), block(&[], end())];
+        assert_eq!(agree(&looping, &[], &[1], 2), [0, 0, 1, 0]);
+        // A parameter, given at the entry, and a local never assigned.
+        let given = [block(&[], goto(1)), block(&[], end())];
+        assert_eq!(agree(&given, &[0], &[0, 1], 2), [0b01, 0b01]);
+        // Blocks nothing reaches: one with no way in, a cycle of two.
+        let unreached =
+            [block(&[], end()), block(&[1], goto(2)), block(&[], end()), block(&[], goto(4)), block(&[], goto(3))];
+        agree(&unreached, &[], &[1], 2);
+        // More than 64 kept: all assigned at the entry, then a join.
+        let all: Vec<u32> = (0..70).collect();
+        let many = [block(&all, branch(1, 2)), block(&[], goto(3)), block(&[69], goto(3)), block(&[], end())];
+        let masks = agree(&many, &[], &all, 70);
+        assert!(masks.iter().all(|&mask| mask == u64::MAX), "{masks:x?}");
     }
 }

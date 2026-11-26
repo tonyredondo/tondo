@@ -122,6 +122,16 @@ fn main(): !String {
     long = "{long}    total\n}}\n"
     lines += long.lines().length()
     write(path.join(root, "src/long/long.to"), long)?
+    // One function with a check at each of its lines, as many as the
+    // project has units: what its checks cost grows with its length, and
+    // not with its length times its checks, which `--guard` holds.
+    var checked = "pub fn checked(seed: Int, limit: Int): Int {{\n    var total = seed\n"
+    for index in 0..units {
+        checked = "{checked}    total += {index % 7}\n    assert(total < limit)\n"
+    }
+    checked = "{checked}    total\n}}\n"
+    lines += checked.lines().length()
+    write(path.join(root, "src/long/checked.to"), checked)?
     var program = "import generated.long\n"
     for module in 0..modules {
         program = "{program}import generated.part{module}\n"
@@ -132,6 +142,7 @@ fn main(): !String {
         program = "{program}    total += part{module}.start({module})?\n"
     }
     program = "{program}    total += long.long(1)\n"
+    program = "{program}    total += long.checked(1, 1_000_000_000)\n"
     program = "{program}    console.println(\"{{total}}\")\n}}\n"
     lines += program.lines().length()
     write(path.join(root, "src/main.to"), program)?

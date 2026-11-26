@@ -3829,6 +3829,9 @@ struct FnCodegen<'a, 'b> {
     statics: HashMap<Local, DataId>,
     /// Where an explicit panic keeps the numbers a dump shows, and which.
     keeping: Option<(ir::StackSlot, Vec<(Local, Variable)>)>,
+    /// Which of those numbers each block's end finds assigned: the same
+    /// for every panic of the function, so computed at the first.
+    assigned: Option<Vec<u64>>,
     /// The block being built.
     block: usize,
     /// What the probe just placed answered: whether to restart the frame;
@@ -4126,6 +4129,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             unfixed: HashSet::new(),
             statics: HashMap::new(),
             keeping,
+            assigned: None,
             block: 0,
             probed: None,
             tight_loops: crate::mir::tight_loops(&body.blocks),

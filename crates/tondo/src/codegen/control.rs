@@ -254,10 +254,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// after a word with the bits of those it holds.
     pub(super) fn keep_numbers(&mut self) {
         let Some((slot, kept)) = self.keeping.clone() else { return };
-        let assigned = crate::mir::assigned_at_end(&self.body.blocks, &self.body.params, self.body.locals.len());
+        let body = self.body;
+        let assigned = self.assigned.get_or_insert_with(|| {
+            let locals: Vec<Local> = kept.iter().map(|&(local, _)| local).collect();
+            crate::mir::assigned_at_end(&body.blocks, &body.params, &locals, body.locals.len())
+        })[self.block];
         let mut bits = 0u64;
-        for (index, &(local, var)) in kept.iter().enumerate().take(63) {
-            if assigned[self.block][local.0 as usize] {
+        for (index, &(_, var)) in kept.iter().enumerate().take(63) {
+            if assigned & 1 << index != 0 {
                 bits |= 1 << index;
                 let value = self.e.fb.use_var(var);
                 self.e.fb.ins().stack_store(POINTER, value, slot, (index as i32 + 1) * 8);
