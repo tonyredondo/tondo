@@ -91,6 +91,8 @@ tondo compiler HEAD~1              the tondo of a revision of tondo's repository
                                    both by their sha256 first, and refuses a tondo
                                    against itself: --same compares them anyway
 tondo test --bench --compiler HEAD~1   the benchmarks, against what that tondo measures
+tondo test --bench --series main..HEAD   each commit of a change to tondo against the
+                                   one before, then the head against the base
 tondo test --affected main         the tests that reach what changed since a commit
 tondo run --watch --tests          reloads on each change, and runs the tests it reaches
 tondo eval app "total(order())"    what an expression gives in a running live build

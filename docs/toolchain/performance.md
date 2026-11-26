@@ -1673,6 +1673,61 @@ is longer and a run is shorter: with this change eight of the repository's
 examples run 2.5% to 7.8% fewer instructions, which is the benchmarks' to
 say, with `tondo test --bench --compiler`.
 
+A change to the compiler made of several commits is measured commit by
+commit with `--series <base>..<head>`. It builds the Tondo of each revision
+from the base to the head that changes what a Tondo is built from, and
+takes each only with the record of its build; a commit of tests or of
+documents is the Tondo of its parent, and the series says so without
+building it. All of them measure the same sources, the projects as they are
+where the command runs. First each runs one benchmark of each project, and
+nothing more is measured if one fails, so a revision that cannot build the
+projects costs a minute and not the hours after it. Then each revision is
+measured once:
+
+```text
+$ tondo test bench/tondo --bench --bench-time 0.2 --filter arrays --series 4b90a0f6..7fe55201 --regression-by instructions --max-regression 2
+series: 4b90a0f6 to 7fe55201, 1 commit after the base, 1 of them changing what tondo is built from
+  4b90a0f6  sha256 6b0df42e95920dfd: Check a product by 2 by the flag of the factor added to itself
+  7fe55201  sha256 6887ea7b6727f328: Test divisibility by a constant with its inverse, and divide by one unchecked
+measuring bench/tondo as they are here, sources 00c41eee9bf2b643
+first run: bench/tondo with every tondo, each passed
+  4b90a0f6 bench/tondo: kept, measured 36 min ago
+  7fe55201 bench/tondo: kept, measured 36 min ago
+7fe55201  Test divisibility by a constant with its inverse, and divide by one unchecked (sha256 6887ea7b6727f328 against 6b0df42e95920dfd)
+    bench/tondo: bench::unit::bench::arrays map filter sum 10000  353.5k → 323.5k ins/op (-8.5%), 16.12 µs and 16.39 µs
+    bench/tondo: its tests' executable 14685488 bytes, now 14680632 (-0.03%)
+whole: the tondo of 7fe55201 against that of 4b90a0f6
+tondo: comparing with the tondo of <its path> (sha256 6b0df42e95920dfd), this one being 6887ea7b6727f328
+tondo: measuring the benchmarks with the tondo of <its path>, to compare with
+test bench::unit::bench::arrays ... ok
+  push 1000                518.0 ns/op  ±0.4%  0 allocs/op +1 in regions  0 B/op +8032 in regions  12.8k ins/op  -1.1% same, +0.0% ins
+  sort 10000               63.75 µs/op  ±0.2%  0 allocs/op +1 in regions  0 B/op +80032 in regions  1.32M ins/op  -1.1% same, +0.0% ins
+  map filter sum 10000     16.08 µs/op  ±0.4%  0 allocs/op +12 in regions  0 B/op +145888 in regions  323.5k ins/op  -0.9% same, -8.5% ins
+      code changed, in instructions: test arrays 6557 → 6514, closure in test arrays 1319 → 1299
+  index sum 10000          2.057 µs/op  ±0.1%  0 allocs/op  0 B/op  45.0k ins/op  -0.3% same, +0.0% ins
+ok. 1 passed; 0 failed; 0 skipped; 0 blocked; 1.52s
+no benchmark regressed, and every test passed with every revision
+```
+
+Under each commit are the benchmarks it moved against the one before,
+judged by what two runs taken hours apart agree on: the instructions of a
+run, by half a percent or more, and its allocations and bytes, which are
+exact. The two times stand beside them with no word, as one run of each
+side says little of time; and the size of the executable the benchmarks
+run in, when the commit changed it. After the steps comes the whole, the
+head against the base in turns as `--compiler` measures, in the orders
+`--layouts` gives, and each benchmark that got worse there is put down to
+the commit whose step made it grow most, or to where its code lies when no
+step did.
+
+A revision's measure is kept under the hashes of its Tondo and of the
+sources measured, the options that change a measure, the `TONDO_*`
+variables and the machine, and a later series takes it from there, saying
+since when, as the two lines above do: a series with one more commit
+measures that commit alone. `--fresh` measures every revision again. A
+benchmark whose test fails with some revision has no measure there; the
+series goes on, and fails at its end naming the test and the revision.
+
 ## The processor a build is for
 
 A build is for a level of processor, which says which instructions its code
