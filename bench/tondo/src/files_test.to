@@ -1,9 +1,35 @@
 import std.fs
 import std.testing
 
+/// The bytes of the file's lines without their ends, read one at a time.
+fn readLines(file: String): Int ! fs.FsError {
+    var reader = fs.open(file, fs.OpenMode.Read)?
+    var total = 0
+    for {
+        match reader.readLine()? {
+            some(line) => total += line.byteLength()
+            none => break
+        }
+    }
+    reader.close()?
+    total
+}
+
+/// Writes the line `count` times, each with its `\n`.
+fn writeLines(file: String, line: String, count: Int): !fs.FsError {
+    var writer = fs.open(file, fs.OpenMode.Write)?
+    for _ in 0..count {
+        writer.write(line)?
+        writer.write("\n")?
+    }
+    writer.close()?
+}
+
 /// A file of about 1 MiB read whole as text, from the page cache once the
 /// setup has written it: an open, a read, a close, and Tondo's check that
-/// it is UTF-8, which Go does not make.
+/// it is UTF-8, which Go does not make. Then four mebibytes of lines read
+/// one at a time and written one at a time, through each side's buffer:
+/// its refills and its calls to the system, beside a text for each line.
 test files {
     let directory = fs.createTemporaryDirectory(pattern: "bench-files-*")?
     defer {
@@ -14,4 +40,12 @@ test files {
     fs.writeText(file, text)?
     let read = testing.bench("readText", () => fs.readText(file))?
     assert(read.byteLength() == 1_048_506 and read == text)
+    let line = Ascii.trimEnd()
+    let lines = "{line}\n".repeat(95_325)
+    let linesFile = "{directory}/lines.txt"
+    fs.writeText(linesFile, lines)?
+    assert(testing.bench("readLines 4MiB", () => readLines(linesFile))? == 4_098_975)
+    let written = "{directory}/written.txt"
+    testing.bench("writeLines 4MiB", () => writeLines(written, line, 95_325))?
+    assert(fs.readText(written)? == lines and lines.byteLength() == 4_194_300)
 }
