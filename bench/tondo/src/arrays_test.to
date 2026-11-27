@@ -46,4 +46,14 @@ test arrays {
     )
     // bench/go gives the same.
     assert(testing.bench("index sum 10000", () => indexed(values)) == 497_478_728)
+    // A million, past the caches: the sort's copy is one large allocation
+    // a run, and the array `map` makes one written at memory's speed.
+    let million = shuffled(1_000_000)
+    let sortedMillion = testing.bench("sort 1000000", () => million.sorted())
+    assert(sortedMillion.length() == 1_000_000 and sortedMillion.sum() == 49_959_089_856)
+    assert(sortedMillion[0] == 0 and sortedMillion[500_000] == 49_958)
+    assert(sortedMillion[999_999] == 99_999)
+    let mapped = testing.bench("map 1000000", () => million.map(x => x * 3 + 1))
+    assert(mapped.length() == 1_000_000 and mapped.sum() == 149_878_269_568)
+    assert(mapped[0] == 288_082 and mapped[999_999] == 253_567)
 }

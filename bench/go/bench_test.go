@@ -292,6 +292,15 @@ func indexed(values []int) int {
 	return total
 }
 
+// totalOf gives the sum of the values, to check a row's answer.
+func totalOf(values []int) int {
+	total := 0
+	for _, x := range values {
+		total += x
+	}
+	return total
+}
+
 func BenchmarkArrays(b *testing.B) {
 	b.Run("push 1000", func(b *testing.B) {
 		for b.Loop() {
@@ -328,6 +337,33 @@ func BenchmarkArrays(b *testing.B) {
 	b.Run("index sum 10000", func(b *testing.B) {
 		for b.Loop() {
 			sinkInt = indexed(values)
+		}
+	})
+	// A million, past the caches: the sort's copy is one large allocation
+	// a run, and the mapped slice one written at memory's speed.
+	million := shuffled(1_000_000)
+	b.Run("sort 1000000", func(b *testing.B) {
+		for b.Loop() {
+			sorted := append([]int(nil), million...)
+			sort.Ints(sorted)
+			sinkInts = sorted
+		}
+		if len(sinkInts) != 1_000_000 || totalOf(sinkInts) != 49_959_089_856 || sinkInts[0] != 0 ||
+			sinkInts[500_000] != 49_958 || sinkInts[999_999] != 99_999 {
+			b.Fatalf("sort 1000000 gave %d values summing to %d", len(sinkInts), totalOf(sinkInts))
+		}
+	})
+	b.Run("map 1000000", func(b *testing.B) {
+		for b.Loop() {
+			mapped := make([]int, len(million))
+			for i, x := range million {
+				mapped[i] = x*3 + 1
+			}
+			sinkInts = mapped
+		}
+		if len(sinkInts) != 1_000_000 || totalOf(sinkInts) != 149_878_269_568 || sinkInts[0] != 288_082 ||
+			sinkInts[999_999] != 253_567 {
+			b.Fatalf("map 1000000 gave %d values summing to %d", len(sinkInts), totalOf(sinkInts))
 		}
 	})
 }
