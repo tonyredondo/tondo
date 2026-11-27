@@ -10596,3 +10596,123 @@ lies where it runs slower. Go's own times
 moved by a median of 2.5% from piece 1's table, a dozen rows by more than
 a tenth with the same instructions, as one run a row of Go gives;
 docs/pending.md has the five runs that will steady it.
+
+## The table runs Go five times, in an environment of its own
+
+`bench/compare.to` ran each of Go's rows once, so the table's Go column
+was one sample, and Go's time on a row that allocates much moved from one
+run to the next with when its collector worked: the three rows of a
+mebibyte gave 35.0 to 58.8 µs, 52.3 to 73.2 and 140.3 to 236.5 over six
+runs, where Tondo's stayed within 2.1%. Go now runs each row five times;
+the table gives their median, of the time, the allocations and the bytes,
+and a row whose runs spread past a tenth gives the fastest and the
+slowest beside it. Go's collector is left as it is, which is what Go
+measures.
+
+The rows that start a program move with the environment's size and with
+the directories of `PATH`, as Go copies the environment at each start and
+looks the program up through it. compare.to starts itself again, once, in
+an environment that both sides inherit, whatever started it: `HOME` as
+given, a `PATH` of the directory of the `go` it finds, `/usr/bin` and
+`/bin`, then `dotnet`'s and `perf`'s where they lie elsewhere, `TONDO`,
+and `TABLE_01` on of thirty bytes, 55 variables or as many as
+`--variables` names, which its first line says. Started from a shell of 57
+variables and a `PATH` of 20 directories, it gives the process rows the
+table's 21 and 19 allocations, and Go's 47 and 34, where that shell's
+`PATH` gave Go's `true by name` 63.
+
+With five runs, Go's rows that allocate much are faster than one run said:
+of the 80 rows of the table before, which gave 70 at or under Go's time, 65
+are, `tasks/spawn`, `http/json 64x100` and `texts/fromBytes other` behind
+by more than a tenth. The tables before flattered Tondo where Go
+allocates. Two tables taken so, at 487a19d9 and at 3fd8917c, have Go's
+times at a median of 0.998 of one another, three rows apart by more than
+a tenth.
+
+Rows whose run takes tens of milliseconds were to have three seconds; at
+the table's one second the slowest, `maps/lookup 1000000 ints` at 40 ms a
+run, takes some 24 samples within 0.9%, so every row runs on the same
+second.
+
+## Rows of large data
+
+The rows worked on a thousand to a hundred thousand values, which stay in
+the caches. On the maintainer's word of 2026-11-26, 21 more do the same
+kinds of work at a size where caches, the allocator's large blocks,
+regions that grow and Go's collector behave otherwise, each beside the
+smaller row it scales, with its size in its name, both sides asserting the
+same answer after the measured runs: `arrays/sort` and `arrays/map` of a
+million; `maps/insert` and `maps/lookup` of a million ints, the second in
+the generator's order; `queries/groupBy` of a million records by their
+cents modulo 4096, as the customers are fewer than 4096; `texts/split
+lines` (23,831 lines of 44 bytes), `replace other`, `contains` and
+`toUpper other` over a mebibyte; `json/decode` and `json/encode` of a
+mebibyte of 12,548 sales; `files/readLines` and `writeLines` of four;
+`http/echo` and `net/echo` of a mebibyte; `hash/sha256`, `gzip/compress`
+and `decompress`, `encoding/base64 encode` and `decode` over a mebibyte;
+`regex/findAll` over one. Left out, as measuring a thing twice: the linear
+scans the small rows already show, a lazy chain with nothing made, untyped
+JSON, hex, a file written whole, which renames where Go's does not, and
+the variants over TLS.
+
+At their first table, 8 were behind Go by more than a tenth: `net/echo`
+11.7×, `encoding/base64 decode` 42×, `gzip/compress` 4.0×, `base64 encode`
+2.3×, `maps/lookup` 2.2×, `files/readLines` 1.8×, `writeLines` 1.4×,
+`texts/split lines` 1.2×. The changes after them in this push took base64
+and gzip in; what is left of each is in docs/pending.md.
+
+## A large file is read straight into its text
+
+`fs.readText` read a file into a buffer of the heap, checked it, and
+copied it into its text: a mebibyte read was two, one of them on the heap.
+A file of 64 KiB or more is now read into the text itself, built where the
+caller keeps it, in its region or on the heap, by the descriptor into the
+text's room by its address, and checked as UTF-8 where it lies. The text
+is made on the task's thread, so it takes a second call of the host, which
+waits for its work even when the task is cancelled, so the room cannot go
+while the host writes it. Each call of the host makes two allocations,
+for its work and its wait: the large way makes 5, two calls and the path,
+where the small one makes 4, one call, the path and the buffer, which is
+why a smaller file is read and copied in one call as before. With both
+tondos built for release, `files/readText` takes 11.2% less time with
+10.4% fewer instructions, and puts 243 bytes on the heap where it put
+1,048,645.
+
+## Base64 is read through a table
+
+Base64 found each character's value by a search of its alphabet, and the
+library reads a text twice, to check it and to decode it: a mebibyte took
+32.8 ms and 605 million instructions, 42 times Go's time. Each alphabet
+has a table of every byte's value, and the encoder writes three bytes as
+four characters at a time: decode 1.52 ms and encode 0.54, against Go's
+0.78 and 0.74, with 92.8% and 74.8% fewer instructions. Two tests hold both
+to the code before them. The check and the decode stay two passes: a
+native gives one value, so the bytes or the offset of what is wrong would
+take an object and three natives, as gzip's do; a decode of four
+characters checked at once is the smaller thing to try.
+
+## gzip is written and read by zlib-rs
+
+The runtime's gzip and deflate, of `std.gzip`, of HTTP's bodies, gRPC's
+compression, dumps and recordings, went through flate2 with miniz_oxide,
+its default backend. It now builds with flate2's `zlib-rs` feature: zlib-rs
+0.6, under the Zlib licence, a port of zlib-ng to Rust with vectors, a
+feature of a library the runtime has, as simdutf8 was. On `gzip/compress
+1MiB` it takes 7.75 ms where it took 16.1, against Go's 3.96, and
+`decompress` 0.50 where it took 0.74, against Go's 1.56. It writes more at
+the same level, as zlib-ng weighs size against time otherwise, and more
+than Go:
+
+| Level | zlib-rs | miniz_oxide | Go |
+|---|---:|---:|---:|
+| 1 | 291,507 | 244,071 | 194,943 |
+| 6, the default | 131,987 | 121,275 | 127,166 |
+| 9 | 120,907 | 119,569 | 117,168 |
+
+The default level was weighed and kept at 6: a program gets its answer in
+half the time for 8.8% more bytes, and one that wants the old size asks
+for 9, as small as miniz_oxide's 6 in a fifth less time. A level is the
+library's own scale, and the specification promises none of the bytes it
+writes. The maintainer: "Lo hacemos así". A test holds that gzip written
+before reads as it did, and that what zlib-rs writes at levels 1, 6 and 9
+inflates with miniz_oxide's own inflater, with gzip's checksum and size.
