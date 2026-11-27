@@ -557,6 +557,70 @@ func BenchmarkJson(b *testing.B) {
 			sinkString = string(text)
 		}
 	})
+	// A mebibyte of 12,548 sales, decoded into records and written again,
+	// the same bytes as Tondo's; the written bytes are kept as they are.
+	written, err := json.Marshal(sales(12_548))
+	if err != nil || len(written) != 1_048_559 || fnv64a(string(written)) != 17440677758073632460 {
+		b.Fatalf("the sales are not the mebibyte Tondo writes: %d bytes, %v", len(written), err)
+	}
+	var decoded []sale
+	b.Run("decode 1MiB", func(b *testing.B) {
+		for b.Loop() {
+			decoded = nil
+			if err := json.Unmarshal(written, &decoded); err != nil {
+				b.Fatal(err)
+			}
+			sinkAny = decoded
+		}
+		cents := 0
+		for _, s := range decoded {
+			cents += s.Cents
+		}
+		last := decoded[len(decoded)-1]
+		if len(decoded) != 12_548 || cents != 623_750_426 || last.Region != "east" || !slices.Equal(last.Items, []string{"a2", "b2", "c2"}) {
+			b.Fatalf("decode 1MiB gave %d sales of %d cents", len(decoded), cents)
+		}
+	})
+	b.Run("encode 1MiB", func(b *testing.B) {
+		var text []byte
+		for b.Loop() {
+			text, err = json.Marshal(decoded)
+			if err != nil {
+				b.Fatal(err)
+			}
+			sinkAny = text
+		}
+		if string(text) != string(written) {
+			b.Fatalf("encode 1MiB gave %d bytes", len(text))
+		}
+	})
+}
+
+type sale struct {
+	ID       int      `json:"id"`
+	Customer int      `json:"customer"`
+	Cents    int      `json:"cents"`
+	Region   string   `json:"region"`
+	Items    []string `json:"items"`
+}
+
+// sales gives count sales from the generator, each with three items, as the
+// Tondo side makes them.
+func sales(count int) []sale {
+	regions := []string{"north", "south", "east", "west"}
+	all := make([]sale, 0, count)
+	seed := 42
+	for id := 0; id < count; id++ {
+		seed = (seed*1_103_515_245 + 12345) % 2_147_483_648
+		all = append(all, sale{
+			ID:       id,
+			Customer: seed % 1000,
+			Cents:    seed % 100_000,
+			Region:   regions[seed%4],
+			Items:    []string{fmt.Sprintf("a%d", seed%10), fmt.Sprintf("b%d", seed%20), fmt.Sprintf("c%d", seed%30)},
+		})
+	}
+	return all
 }
 
 func BenchmarkRegex(b *testing.B) {

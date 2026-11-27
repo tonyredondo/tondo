@@ -10,6 +10,35 @@ type Item = {
     available: Bool
 }
 
+type Sale = {
+    id: Int
+    customer: Int
+    cents: Int
+    region: String
+    items: Array[String]
+}
+
+/// `count` sales from the generator, each with three items, as the Go side
+/// makes them.
+fn sales(count: Int): Array[Sale] {
+    let regions = ["north", "south", "east", "west"]
+    var all: Array[Sale] = []
+    var seed = 42
+    for id in 0..count {
+        seed = (seed * 1_103_515_245 + 12345) % 2_147_483_648
+        all.push(
+            Sale {
+                id
+                customer: seed % 1000
+                cents: seed % 100_000
+                region: regions[seed % 4]
+                items: ["a{seed % 10}", "b{seed % 20}", "c{seed % 30}"]
+            },
+        )
+    }
+    all
+}
+
 const Document: String = "{{\"id\": 7, \"name\": \"lamp\", \"price\": 19.5, \"tags\": [\"home\", \"light\"], \"available\": true, \"stock\": 120, \"color\": \"white\", \"weight\": 1.25, \"brand\": \"lumen\", \"code\": \"LMP-7\"}}"
 
 fn numbers(count: Int): String {
@@ -55,4 +84,13 @@ test json {
     assert(text.byteLength() == 7357)
     assert(text.startsWith("[{{\"id\":0,\"name\":\"item 0\","))
     assert(text.endsWith("\"tags\":[\"a\",\"b\"],\"available\":false}}]"))
+    // A mebibyte of 12,548 sales, decoded into records and written again,
+    // the same bytes as Go's.
+    let written = json.encode(sales(12_548))
+    assert(written.byteLength() == 1_048_559)
+    assert(hash.fnv64a(written.bytes()) == 17440677758073632460)
+    let decoded = testing.bench("decode 1MiB", () => json.decode[Array[Sale]](written))?
+    assert(decoded.length() == 12_548 and decoded.map(sale => sale.cents).sum() == 623_750_426)
+    assert(decoded[12_547].region == "east" and decoded[12_547].items == ["a2", "b2", "c2"])
+    assert(testing.bench("encode 1MiB", () => json.encode(decoded)) == written)
 }
