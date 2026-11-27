@@ -1,0 +1,14 @@
+import std.gzip
+import std.json
+import std.testing
+
+/// A mebibyte of JSON, which varies as data does, compressed at gzip's
+/// level 6 and decompressed again: the library against Go's compress/flate,
+/// each side decompressing what it compressed.
+test gzip {
+    let data = json.encode(sales(12_548)).bytes()
+    let packed = testing.bench("compress 1MiB", () => gzip.compress(data, level: 6))
+    assert(gzip.decompress(packed)? == data and packed.length() < data.length() / 4)
+    let unpacked = testing.bench("decompress 1MiB", () => gzip.decompress(packed))?
+    assert(unpacked == data)
+}
