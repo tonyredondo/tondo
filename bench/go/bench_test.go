@@ -412,6 +412,49 @@ func BenchmarkMaps(b *testing.B) {
 			sinkInt = named(1000)
 		}
 	})
+	// A million: a map that grows past the caches through its rehashes,
+	// and lookups in the generator's order, most of them a miss of them.
+	b.Run("insert 1000000 ints", func(b *testing.B) {
+		for b.Loop() {
+			sinkInt = inserted(1_000_000)
+		}
+		if sinkInt != 1_000_000 {
+			b.Fatalf("insert 1000000 ints gave %d", sinkInt)
+		}
+	})
+	million := map[int]int{}
+	for i := 0; i < 1_000_000; i++ {
+		million[i] = i * 2
+	}
+	keys := scattered(1_000_000)
+	b.Run("lookup 1000000 ints", func(b *testing.B) {
+		for b.Loop() {
+			sinkInt = lookedUp(million, keys)
+		}
+		if sinkInt != 1_000_787_979_712 || keys[0] != 496_027 {
+			b.Fatalf("lookup 1000000 ints gave %d", sinkInt)
+		}
+	})
+}
+
+// scattered gives count keys below count in the generator's order, as the
+// Tondo side makes them.
+func scattered(count int) []int {
+	keys := make([]int, 0, count)
+	seed := 42
+	for i := 0; i < count; i++ {
+		seed = (seed*1_103_515_245 + 12345) % 2_147_483_648
+		keys = append(keys, seed%count)
+	}
+	return keys
+}
+
+func lookedUp(squares map[int]int, keys []int) int {
+	total := 0
+	for _, key := range keys {
+		total += squares[key]
+	}
+	return total
 }
 
 type point struct{ x, y int }

@@ -16,6 +16,26 @@ fn looked(squares: Map[Int, Int], count: Int): Int {
     total
 }
 
+/// `count` keys below `count` in the generator's order, as the Go side
+/// makes them.
+fn scattered(count: Int): Array[Int] {
+    var keys: Array[Int] = []
+    var seed = 42
+    for _ in 0..count {
+        seed = (seed * 1_103_515_245 + 12345) % 2_147_483_648
+        keys.push(seed % count)
+    }
+    keys
+}
+
+fn lookedUp(squares: Map[Int, Int], keys: Array[Int]): Int {
+    var total = 0
+    for key in keys {
+        total += squares.get(key) ?? 0
+    }
+    total
+}
+
 fn named(count: Int): Int {
     var ages: Map[String, Int] = [:]
     for i in 0..count {
@@ -33,4 +53,14 @@ test maps {
     }
     assert(testing.bench("lookup 10000 ints", () => looked(squares, 10_000)) == 99_990_000)
     assert(testing.bench("insert 1000 strings", () => named(1000)) == 1000)
+    // A million: a map that grows past the caches through its rehashes,
+    // and lookups in the generator's order, most of them a miss of them.
+    assert(testing.bench("insert 1000000 ints", () => inserted(1_000_000)) == 1_000_000)
+    var million: Map[Int, Int] = [:]
+    for i in 0..1_000_000 {
+        million[i] = i * 2
+    }
+    let keys = scattered(1_000_000)
+    let total = testing.bench("lookup 1000000 ints", () => lookedUp(million, keys))
+    assert(total == 1_000_787_979_712 and keys[0] == 496_027)
 }
