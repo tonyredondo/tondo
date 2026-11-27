@@ -218,7 +218,7 @@ fn reading(failed: &mut Option<std::io::Error>, result: std::io::Result<usize>) 
 const FRAME: usize = 1 << 20;
 
 enum Packer {
-    Gzip(GzEncoder<Vec<u8>>),
+    Gzip(Box<GzEncoder<Vec<u8>>>),
     Zstd { pending: Vec<u8>, frames: bool },
 }
 
@@ -286,7 +286,7 @@ impl Host for Packing {
 
 /// A reader that decompresses another.
 enum Unpacking {
-    Gzip(MultiGzDecoder<Source>),
+    Gzip(Box<MultiGzDecoder<Source>>),
     /// The frame being read, or the source between frames, and whether a
     /// frame came.
     Zstd(Option<ZstdFrames>, bool),
@@ -373,7 +373,7 @@ impl Host for Unpacking {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_pack_writer(to: *mut StreamObject, zstd: u8, compression: i64) -> *mut StreamObject {
     let packer = match zstd {
-        0 => Packer::Gzip(GzEncoder::new(Vec::new(), level(compression))),
+        0 => Packer::Gzip(Box::new(GzEncoder::new(Vec::new(), level(compression)))),
         _ => Packer::Zstd { pending: Vec::new(), frames: false },
     };
     // It may wait on `to` for as long as it takes, as on a pipe.
@@ -385,8 +385,53 @@ pub unsafe extern "C" fn tondo_rt_pack_writer(to: *mut StreamObject, zstd: u8, c
 pub unsafe extern "C" fn tondo_rt_unpack_reader(from: *mut StreamObject, zstd: u8) -> *mut StreamObject {
     let source = Source { inner: Inner(retain(from)), failed: None };
     let host = match zstd {
-        0 => Unpacking::Gzip(MultiGzDecoder::new(source)),
+        0 => Unpacking::Gzip(Box::new(MultiGzDecoder::new(source))),
         _ => Unpacking::Zstd(Some(ZstdFrames::Between(Ahead { source, peeked: None })), false),
     };
     stream(Box::new(host), Mode::Long, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What miniz_oxide, flate2's backend before zlib-rs, wrote at level 6
+    /// for `SMALL` eight times: gzip that programs and their peers kept.
+    const WRITTEN_BEFORE: &str = "1f8b08000000000000ffedcac711c0201004c15436002525831ce6f02e7a2842e0cd736adabf0c267c27c7612929dc94f107a91d28320bdfb7d86bc145cf366ae129dc00c6c1ecd968010000";
+
+    const SMALL: &str = "the quick brown fox jumps over the lazy dog, ";
+
+    fn bytes(hex: &str) -> Vec<u8> {
+        (0..hex.len()).step_by(2).map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap()).collect()
+    }
+
+    /// gzip that the backend before wrote reads as it did, and what this one
+    /// writes, of text that repeats and bytes that do not, at levels 1, 6 and
+    /// 9, inflates with another inflater, miniz_oxide's, to the same bytes,
+    /// with the checksum and the size gzip ends with.
+    #[test]
+    fn gzip_reads_what_the_backend_before_wrote_and_writes_what_another_reads() {
+        let mut read = Vec::new();
+        MultiGzDecoder::new(&bytes(WRITTEN_BEFORE)[..]).read_to_end(&mut read).unwrap();
+        assert_eq!(read, SMALL.repeat(8).as_bytes());
+        let mut seed = 42u64;
+        let mut data = SMALL.repeat(2000).into_bytes();
+        data.extend((0..65_536).map(|_| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (seed >> 56) as u8
+        }));
+        for compression in [1, 6, 9] {
+            let mut encoder = GzEncoder::new(Vec::new(), level(compression));
+            encoder.write_all(&data).unwrap();
+            let written = encoder.finish().unwrap();
+            // A member: a header of ten bytes, the deflated data, its CRC-32
+            // and its size.
+            let (deflated, end) = written[10..].split_at(written.len() - 18);
+            assert_eq!(miniz_oxide::inflate::decompress_to_vec(deflated).unwrap(), data, "level {compression}");
+            let mut crc = flate2::Crc::new();
+            crc.update(&data);
+            assert_eq!(end[..4], crc.sum().to_le_bytes());
+            assert_eq!(end[4..], (data.len() as u32).to_le_bytes());
+        }
+    }
 }

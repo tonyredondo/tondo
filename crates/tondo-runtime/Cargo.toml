@@ -19,7 +19,9 @@ brotli-decompressor = "6.0.1"
 bytes = "1.12.1"
 cookie = "0.18.2"
 cookie_store = "0.22.1"
-flate2 = "1"
+# zlib-rs, a port of zlib-ng with vectors, writes gzip in half the time of
+# miniz_oxide, flate2's default (docs/decisions.md).
+flate2 = { version = "1", features = ["zlib-rs"] }
 futures-util = { version = "0.3.34", features = ["sink"] }
 h2 = "0.4.20"
 hmac = "0.13.0"
@@ -72,6 +74,10 @@ webpki-roots = "1.0.10"
 # a block freed twice, or written after it was freed, shows where it
 # happens (`TONDO_RUNTIME_HEAP_CHECKS=1` in the compiler's build).
 heap-checks = ["mimalloc/debug", "mimalloc/secure"]
+
+[dev-dependencies]
+# Another inflater, which reads what zlib-rs writes as any reader of gzip.
+miniz_oxide = "0.9"
 
 [build-dependencies]
 flate2 = "1"

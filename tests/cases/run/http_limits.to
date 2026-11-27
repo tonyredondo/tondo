@@ -38,7 +38,7 @@ fn main(): !http.HttpError {
     let server = app.start(limits: limits)?
     let mebibyte = http.ClientLimits.Default with { maxBodyBytes: 1024 * 1024 }
     let small = http.Client(baseUrl: server.url(), limits: mebibyte)
-    console.println("on the wire: {zeros.length()} bytes")
+    console.println("on the wire, under 8 KiB: {zeros.length() < 8 * 1024}")
     match small.get("/bomb")?.bytes() {
         ok(data) => console.println("bomb: {data.length()}")
         err(http.HttpError.TooLarge(limit)) => console.println(
@@ -82,7 +82,7 @@ fn main(): !http.HttpError {
     server.stop()
 }
 
-// expect-stdout: on the wire: 5116 bytes
+// expect-stdout: on the wire, under 8 KiB: true
 // expect-stdout: bomb 1048576: the body of the response is larger than 1 MiB, the most `ClientLimits.maxBodyBytes` allows: raise it with `limits: http.ClientLimits.Default with { maxBodyBytes: … }`, or for one response with `response.limitBody(bytes)`
 // expect-stdout: raised for one: 5242880
 // expect-stdout: by default: 2147483648

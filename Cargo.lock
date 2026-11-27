@@ -2503,6 +2503,7 @@ dependencies = [
  "memchr",
  "mimalloc",
  "mime_guess",
+ "miniz_oxide 0.9.1",
  "mio 1.2.4",
  "multer",
  "regex",
