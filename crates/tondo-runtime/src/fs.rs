@@ -200,16 +200,21 @@ fn read_large(file: std::fs::File, size: usize, region: *mut crate::regions::Reg
     let mut builder = unsafe { started.assume_init() };
     let (at, _, room) = builder.parts();
     let into = at as usize;
-    // The task waits for the host's work to end, so its room stays.
+    // The task waits for the host's work to end, so its room stays. The
+    // descriptor reads into it, which nothing has written yet, by its
+    // address: no reference is made to bytes before they are read.
     let read = host(move || {
         let (mut file, mut filled) = (file, 0);
-        let room = unsafe { std::slice::from_raw_parts_mut(into as *mut u8, room) };
-        while filled < room.len() {
-            match file.read(&mut room[filled..]) {
-                Ok(0) => return Ok((filled, Vec::new())),
-                Ok(n) => filled += n,
-                Err(e) if e.kind() == ErrorKind::Interrupted => {}
-                Err(e) => return io(Err(e)),
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&file);
+        while filled < room {
+            let n = unsafe { libc::read(fd, (into + filled) as *mut libc::c_void, room - filled) };
+            match n {
+                0 => return Ok((filled, Vec::new())),
+                n if n > 0 => filled += n as usize,
+                _ => match std::io::Error::last_os_error() {
+                    e if e.kind() == ErrorKind::Interrupted => {}
+                    e => return io(Err(e)),
+                },
             }
         }
         let mut rest = Vec::new();
