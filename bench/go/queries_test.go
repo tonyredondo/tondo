@@ -112,6 +112,26 @@ func BenchmarkQueries(b *testing.B) {
 			sinkInt = len(groups)
 		}
 	})
+	// A million records in 4096 groups of about 244, each a slice grown by
+	// its appends.
+	million := orders(1_000_000)
+	b.Run("groupBy 1000000", func(b *testing.B) {
+		var groups map[int][]order
+		for b.Loop() {
+			groups = map[int][]order{}
+			for _, o := range million {
+				groups[o.cents%4096] = append(groups[o.cents%4096], o)
+			}
+			sinkInt = len(groups)
+		}
+		grouped := 0
+		for _, group := range groups {
+			grouped += len(group)
+		}
+		if len(groups) != 4096 || grouped != 1_000_000 || len(groups[0]) != 262 || len(groups[4095]) != 224 {
+			b.Fatalf("groupBy 1000000 gave %d groups of %d records", len(groups), grouped)
+		}
+	})
 	b.Run("sortedBy 10000", func(b *testing.B) {
 		for b.Loop() {
 			sorted := slices.Clone(all)

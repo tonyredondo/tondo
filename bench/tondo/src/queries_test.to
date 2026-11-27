@@ -75,6 +75,17 @@ test queries {
     assert(
         testing.bench("groupBy 10000", () => all.groupBy(order => order.customer).length()) == 1000,
     )
+    // A million records in 4096 groups of about 244, each an array grown
+    // by its pushes: where the groups' growth meets regions and the heap.
+    let million = orders(1_000_000)
+    let groups = testing.bench(
+        "groupBy 1000000",
+        () => million.groupBy(order => order.cents % 4096),
+    )
+    assert(
+        groups.length() == 4096 and groups.values().map(group => group.length()).sum() == 1_000_000,
+    )
+    assert((groups.get(0) ?? []).length() == 262 and (groups.get(4095) ?? []).length() == 224)
     let sorted = testing.bench("sortedBy 10000", () => all.sortedBy(order => order.cents))
     assert(hash.fnv64a("{sorted}".bytes()) == 13415804458253859892)
     assert(sorted.length() == 10_000)
