@@ -26,26 +26,48 @@ pub unsafe extern "C" fn tondo_rt_base64_encode(data: *mut ArrayHeader, url: u8,
     str_in(region, &base64_encode(unsafe { array_items::<u8>(data) }, url != 0))
 }
 
-/// Base64 of RFC 4648, as `tondo_rt_base64_encode` writes it.
+/// Base64 of RFC 4648, as `tondo_rt_base64_encode` writes it: three bytes
+/// to four characters at a time, then the last one or two.
 pub(crate) fn base64_encode(data: &[u8], url: bool) -> Vec<u8> {
     let (alphabet, pad) = if url { (URL, false) } else { (STANDARD, true) };
     let mut out = Vec::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let n = chunk.iter().enumerate().fold(0u32, |n, (i, &b)| n | (u32::from(b) << (16 - 8 * i)));
-        for i in 0..=chunk.len() {
+    let (whole, rest) = data.as_chunks::<3>();
+    for &[a, b, c] in whole {
+        let n = u32::from(a) << 16 | u32::from(b) << 8 | u32::from(c);
+        let at = |shift: u32| alphabet[(n >> shift & 63) as usize];
+        out.extend_from_slice(&[at(18), at(12), at(6), at(0)]);
+    }
+    if !rest.is_empty() {
+        let n = rest.iter().enumerate().fold(0u32, |n, (i, &b)| n | (u32::from(b) << (16 - 8 * i)));
+        for i in 0..=rest.len() {
             out.push(alphabet[(n >> (18 - 6 * i) & 63) as usize]);
         }
         if pad {
-            out.extend(std::iter::repeat_n(b'=', 3 - chunk.len()));
+            out.extend(std::iter::repeat_n(b'=', 3 - rest.len()));
         }
     }
     out
 }
 
+/// Each byte's value in an alphabet of Base64, or `INVALID`.
+const fn values(alphabet: &[u8; 64]) -> [u8; 256] {
+    let mut table = [INVALID; 256];
+    let mut at = 0;
+    while at < 64 {
+        table[alphabet[at] as usize] = at as u8;
+        at += 1;
+    }
+    table
+}
+
+const INVALID: u8 = 255;
+const STANDARD_VALUES: [u8; 256] = values(STANDARD);
+const URL_VALUES: [u8; 256] = values(URL);
+
 /// The bytes of Base64 text, with or without its padding, or the offset
 /// where it is wrong: its length when it ends in the middle of a byte.
 pub(crate) fn base64_decode(input: &[u8], url: bool) -> Result<Vec<u8>, usize> {
-    let alphabet = if url { URL } else { STANDARD };
+    let values = if url { &URL_VALUES } else { &STANDARD_VALUES };
     let end = input.iter().rposition(|&c| c != b'=').map_or(0, |i| i + 1);
     if input.len() - end > 2 || (input.len() > end && !input.len().is_multiple_of(4)) {
         return Err(end);
@@ -53,8 +75,11 @@ pub(crate) fn base64_decode(input: &[u8], url: bool) -> Result<Vec<u8>, usize> {
     let mut out = Vec::with_capacity(end / 4 * 3 + 2);
     let (mut n, mut count) = (0u32, 0);
     for (offset, &c) in input[..end].iter().enumerate() {
-        let value = alphabet.iter().position(|&a| a == c).ok_or(offset)?;
-        n = n << 6 | value as u32;
+        let value = values[c as usize];
+        if value == INVALID {
+            return Err(offset);
+        }
+        n = n << 6 | u32::from(value);
         count += 1;
         if count == 4 {
             out.extend_from_slice(&n.to_be_bytes()[1..]);
@@ -496,4 +521,98 @@ pub unsafe extern "C" fn tondo_rt_path_key(
 ) -> *mut Str {
     let (parent, key) = (String::from_utf8_lossy(text(&parent)), String::from_utf8_lossy(text(&key)));
     crate::strings::str_in(region, path_key(&parent, &key).as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Base64 as it was written before its tables, held as the reference.
+    fn encoded_before(data: &[u8], url: bool) -> Vec<u8> {
+        let (alphabet, pad) = if url { (URL, false) } else { (STANDARD, true) };
+        let mut out = Vec::new();
+        for chunk in data.chunks(3) {
+            let n = chunk.iter().enumerate().fold(0u32, |n, (i, &b)| n | (u32::from(b) << (16 - 8 * i)));
+            for i in 0..=chunk.len() {
+                out.push(alphabet[(n >> (18 - 6 * i) & 63) as usize]);
+            }
+            if pad {
+                out.extend(std::iter::repeat_n(b'=', 3 - chunk.len()));
+            }
+        }
+        out
+    }
+
+    fn decoded_before(input: &[u8], url: bool) -> Result<Vec<u8>, usize> {
+        let alphabet = if url { URL } else { STANDARD };
+        let end = input.iter().rposition(|&c| c != b'=').map_or(0, |i| i + 1);
+        if input.len() - end > 2 || (input.len() > end && !input.len().is_multiple_of(4)) {
+            return Err(end);
+        }
+        let mut out = Vec::new();
+        let (mut n, mut count) = (0u32, 0);
+        for (offset, &c) in input[..end].iter().enumerate() {
+            let value = alphabet.iter().position(|&a| a == c).ok_or(offset)?;
+            n = n << 6 | value as u32;
+            count += 1;
+            if count == 4 {
+                out.extend_from_slice(&n.to_be_bytes()[1..]);
+                (n, count) = (0, 0);
+            }
+        }
+        match count {
+            0 => {}
+            2 => out.push((n >> 4) as u8),
+            3 => out.extend_from_slice(&((n >> 2) as u16).to_be_bytes()),
+            _ => return Err(input.len()),
+        }
+        Ok(out)
+    }
+
+    /// Both alphabets write what they wrote, of every length up to 200 and
+    /// every byte, and read back what they wrote.
+    #[test]
+    fn base64_writes_and_reads_as_before() {
+        let mut seed = 42u64;
+        let data: Vec<u8> = (0..200)
+            .map(|_| {
+                seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                (seed >> 56) as u8
+            })
+            .chain(0..=255)
+            .collect();
+        for url in [false, true] {
+            for end in 0..data.len() {
+                let encoded = base64_encode(&data[..end], url);
+                assert_eq!(encoded, encoded_before(&data[..end], url), "{end} bytes, url {url}");
+                assert_eq!(base64_decode(&encoded, url), Ok(data[..end].to_vec()));
+            }
+        }
+    }
+
+    /// Every text of up to five characters among letters of both alphabets,
+    /// the padding and bytes of neither reads as it read: the same bytes, or
+    /// the same offset where it is wrong.
+    #[test]
+    fn base64_reads_every_short_text_as_before() {
+        let letters = b"Az09+/-_= \x80";
+        let mut text = Vec::new();
+        fn each(text: &mut Vec<u8>, letters: &[u8], left: usize, check: &mut dyn FnMut(&[u8])) {
+            check(text);
+            if left == 0 {
+                return;
+            }
+            for &letter in letters {
+                text.push(letter);
+                each(text, letters, left - 1, check);
+                text.pop();
+            }
+        }
+        let mut check = |text: &[u8]| {
+            for url in [false, true] {
+                assert_eq!(base64_decode(text, url), decoded_before(text, url), "{text:?}, url {url}");
+            }
+        };
+        each(&mut text, letters, 5, &mut check);
+    }
 }
