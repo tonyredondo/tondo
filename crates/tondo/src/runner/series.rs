@@ -354,8 +354,8 @@ fn revisions(root: &Path, base: &str, head: &str) -> Result<Vec<Revision>, Strin
 
 /// What decides a measure: the `tondo`'s bytes, the sources measured, the
 /// options that change what is measured, the environment's `TONDO_*` and
-/// how many variables it has, as a start of a program copies them all, and
-/// the machine. Two measures with one key measure the same thing.
+/// how many variables it has, on which the rows that start a program
+/// depend, and the machine. Two measures with one key measure the same thing.
 fn key(
     sha256: &str,
     project: &str,

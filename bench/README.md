@@ -87,11 +87,12 @@ hours goes so:
 
 This table was measured on an AMD Ryzen 9 5950X, Linux, with go1.27.4 (mise's,
 first on `PATH`), on 2026-11-26 at a9dd4a58, in an environment of 55
-variables, as a start of a program copies them all and the rows that start
-one move with their number: `HOME`, `PATH`, `TONDO` and `TABLE_01` to
-`TABLE_52`, each `abcdefghijklmnopqrstuvwxyz0123`, given to `env -i` with
-no shell between it and `tondo run bench/compare.to`; each side for its
-default level of processor:
+variables, as the rows that start a program move with their number: Go
+copies them at each start, and Tondo gives a child its program's copy
+once the program has changed its environment. `HOME`, `PATH`, `TONDO` and
+`TABLE_01` to `TABLE_52`, each `abcdefghijklmnopqrstuvwxyz0123`, are given
+to `env -i` with no shell between it and `tondo run bench/compare.to`;
+each side for its default level of processor:
 Tondo's `baseline`, x86-64-v2, and Go's `GOAMD64=v1`, as the tables of
 latency and of C# below it. Go's side is one run of each row, `go test
 -bench -benchtime 1s`, whose time moves more from one run to the next than

@@ -2680,8 +2680,8 @@ ejecuta un benchmark de cada proyecto con cada `tondo`, y no mide nada más
 si uno falla. Mide cada revisión una vez y guarda la medida bajo el sha256
 de su `tondo`, el de las fuentes medidas, las opciones que cambian la
 medida, las variables `TONDO_*` del entorno y cuántas variables tiene, que
-dice al empezar, pues cada programa que se arranca las copia todas, y la
-máquina: el procesador, la versión del kernel y la de la biblioteca de C;
+dice al empezar, pues de ellas depende lo que cuesta arrancar un programa, y
+la máquina: el procesador, la versión del kernel y la de la biblioteca de C;
 otra serie con lo mismo la toma de la caché y dice desde cuándo, y `--fresh`
 lo mide todo otra vez. Una medida con tests fallidos no se guarda: sirve a
 esa serie, y la siguiente mide esa revisión otra vez. De cada commit dice
