@@ -3833,8 +3833,9 @@ fn finds_the_commit_that_slowed_a_benchmark() {
     let by = if counts_itself() { "instructions" } else { "time" };
     let bisect = ["test", "--bisect", &commits[0], "--filter", "fibonacci", "--bench", "--bench-time", "0.1"];
     // Step 2 does thousands of times the work of step 1, which is step 0's:
-    // a margin of 200%, which a runner's noise in time does not reach.
-    let judged = [&bisect[..], &["--max-regression", "200", "--regression-by", by, "--json"]].concat();
+    // a margin of 1000%, as a busy runner's time has moved by more than 200%
+    // between two runs of the same work.
+    let judged = [&bisect[..], &["--max-regression", "1000", "--regression-by", by, "--json"]].concat();
     let (out, err, code) = tondo(&dir, &judged);
     assert_eq!(code, 0, "{out}{err}");
     let found: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -3845,7 +3846,7 @@ fn finds_the_commit_that_slowed_a_benchmark() {
     let with = [&judged[..], &["--bisect-with", &builds]].concat();
     let (out, err, code) = tondo(&dir, &with);
     assert_eq!(code, 0, "{out}{err}");
-    assert_eq!(serde_json::from_str::<serde_json::Value>(&out).unwrap()["title"], "step 2");
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&out).unwrap()["title"], "step 2", "{out}");
     let (_, err, code) = tondo(&dir, &bisect);
     assert_eq!(code, 2);
     assert!(err.contains("say by how much, as --max-regression 5"), "{err}");
