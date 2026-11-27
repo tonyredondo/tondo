@@ -43,12 +43,14 @@ step 5's views.
 The rows that handle large data, which the maintainer asked for on
 2026-11-26, are in since the next day, twenty-one of them, with Go's time
 taken as the median of five runs; they and that median changed the list of
-rows behind Go more than any piece of work had. What comes next, in this
-order: main's tests that fail now and then, which made two pushes in two
-days read red (Tools and tests); the scheduler's piece, as main still loses
-a worker's retirement now and then; the streams' rows that the table put
-far behind, a mebibyte echoed and lines read and written; then the server
-and HTTP.
+rows behind Go more than any piece of work had. What comes next, by the
+maintainer's word of 2026-11-27 that the pull requests go on: the
+scheduler's piece, as main still loses a worker's retirement now and then;
+the server's and HTTP's, which takes the mebibyte echoed through a stream
+with it if it reaches the stream's read; then the two other pull requests.
+In the waits of their measures, as they run elsewhere or are small: main's
+tests that fail now and then, which made two pushes in two days read red
+(Tools and tests). The lines read and written follow the pull requests.
 
 1. **What is owed**: what is left of the cost the scheduler's pieces added
    to a spawn and a join, and what the Nightly's jobs under emulation showed
