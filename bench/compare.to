@@ -6,7 +6,10 @@
 // beside them what Tondo makes in regions, where Go would use its heap for
 // what leaves a function; and, where `perf` counts them, the instructions
 // and cycles of a run on each side, which where the code lies does not move
-// as it moves the time. A second table gives the latency of the servers of
+// as it moves the time. Go's time is the median of five runs of each row,
+// whose time moves more than Tondo's from one run to the next where a row
+// allocates much: a row whose runs spread past a tenth gives their range
+// beside it. A second table gives the latency of the servers of
 // the `http` rows at a fixed rate of requests, the median and the 99th
 // percentile, as bench/latency and bench/go/latency measure it; and where
 // `dotnet` runs, a third holds the rows that bench/csharp has too, against
@@ -44,7 +47,12 @@ type Measure = {
     regionBytes: Float
     instructions: Float?
     cycles: Float?
+    /// The time of each run whose median `nanoseconds` is, on Go's side.
+    runs: Array[Float]
 }
+
+/// The runs of each of Go's benchmarks, whose median the table gives.
+const GoRuns: Int = 5
 
 type Row = {
     name: String
@@ -99,6 +107,7 @@ fn tondoSide(
                     regionBytes
                     instructions
                     cycles
+                    runs: []
                 }
             }
         }
@@ -146,7 +155,18 @@ fn goSide(seconds: String, level: String): Map[String, Measure] ! String {
     let ran =
         goCommand(
                 level,
-                ["test", "-run", "^$", "-bench", ".", "-benchmem", "-benchtime", "{seconds}s"],
+                [
+                    "test",
+                    "-run",
+                    "^$",
+                    "-bench",
+                    ".",
+                    "-benchmem",
+                    "-benchtime",
+                    "{seconds}s",
+                    "-count",
+                    "{GoRuns}",
+                ],
             )
             .output()
             .mapErr(e => "cannot run go: {e}")?
@@ -158,9 +178,10 @@ fn goSide(seconds: String, level: String): Map[String, Measure] ! String {
 
 /// The lines `go test -bench` writes, as bench/csharp writes them too:
 /// `BenchmarkCalls/fib_25-32  N  t ns/op  b B/op  a allocs/op`, the
-/// processors after the last `-` and the allocations where counted.
+/// processors after the last `-` and the allocations where counted. A
+/// benchmark run several times, by `-count`, is the median of its runs.
 fn benchmarked(text: String): Map[String, Measure] {
-    var measured: Map[String, Measure] = [:]
+    var runs: Map[String, Array[(Float, Float, Float)]] = [:]
     for line in text.lines() {
         let words = line.words()
         if words.length() < 6 or not words[0].startsWith("Benchmark") or words[3] != "ns/op" {
@@ -181,14 +202,20 @@ fn benchmarked(text: String): Map[String, Measure] {
         let nanoseconds = Float.parse(words[2]) ?? 0.0
         let bytes = Float.parse(words[4]) ?? 0.0
         let allocations = if words.length() >= 8 { Float.parse(words[6]) ?? 0.0 } else { 0.0 }
+        runs[key] = (runs.get(key) ?? []).concat([(nanoseconds, allocations, bytes)])
+    }
+    var measured: Map[String, Measure] = [:]
+    for (key, each) in runs {
+        let times = each.map(run => run.0)
         measured[key] = Measure {
-            nanoseconds
-            allocations
-            bytes
+            nanoseconds: median(times)
+            allocations: median(each.map(run => run.1))
+            bytes: median(each.map(run => run.2))
             regionAllocations: 0.0
             regionBytes: 0.0
             instructions: none
             cycles: none
+            runs: times
         }
     }
     measured
@@ -320,6 +347,7 @@ fn goCounts(measured: Map[String, Measure], level: String): Map[String, Measure]
             regionBytes: measure.regionBytes
             instructions: if instructions > 0.0 { instructions } else { none }
             cycles: if cycles > 0.0 { cycles } else { none }
+            runs: measure.runs
         }
     }
     counted
@@ -358,7 +386,17 @@ fn time(nanoseconds: Float): String {
     "{(nanoseconds / 1_000_000.0).toFixed(2)} ms"
 }
 
-/// The median of some numbers.
+/// The fastest and the slowest of a side's runs, where they spread past a
+/// tenth of its median.
+fn spread(measure: Measure): String {
+    let fastest = measure.runs.min() ?? return ""
+    let slowest = measure.runs.max() ?? return ""
+    match measure.nanoseconds > 0.0 and (slowest - fastest) / measure.nanoseconds > 0.1 {
+        true => " ({time(fastest)}–{time(slowest)})"
+        false => ""
+    }
+}
+
 /// The cycles a second of a side of a row, in billions, where they were
 /// counted: under what the machine runs at, the side's time holds time
 /// off the processor, as when the machine was busy while it ran.
@@ -383,6 +421,8 @@ fn goAgain(name: String, seconds: String, level: String): Measure? {
         "-benchmem",
         "-benchtime",
         "{seconds}s",
+        "-count",
+        "{GoRuns}",
     ]
     let ran = goCommand(level, arguments).output() ?? return none
     benchmarked(ran.text() ?? return none).get(name)
@@ -441,6 +481,7 @@ fn againstOld(
             regionBytes: 0.0
             instructions: none
             cycles: none
+            runs: times
         }
     }
     var rows: Array[(String, Measure, Measure)] = []
@@ -543,6 +584,7 @@ fn main(): !String {
                 match goAgain(row.name, seconds, level) {
                     some(again) if again.nanoseconds < row.go.nanoseconds => {
                         row.go.nanoseconds = again.nanoseconds
+                        row.go.runs = again.runs
                     }
                     _ => {}
                 }
@@ -568,7 +610,7 @@ fn main(): !String {
         "| Benchmark | Tondo | Go | Tondo/Go | Allocs/op Tondo | Allocs/op Go | B/op Tondo | B/op Go | Ins/op Tondo | Ins/op Go | Cycles/op Tondo | Cycles/op Go |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
-    var (slower, more, heavier) = (0, 0, 0)
+    var (slower, more, heavier, spreading) = (0, 0, 0, 0)
     for row in rows {
         let ratio = row.tondo.nanoseconds / row.go.nanoseconds
         if ratio > 1.0 {
@@ -585,6 +627,10 @@ fn main(): !String {
         if memory {
             heavier += 1
         }
+        let range = spread(row.go)
+        if range != "" {
+            spreading += 1
+        }
         let behind = if ratio > 1.0 { " ⚠" } else { "" }
         let mark = if busy.contains(row.name) { "{behind} ⌛" } else { behind }
         let marked = if memory { " ⚠" } else { "" }
@@ -599,12 +645,16 @@ fn main(): !String {
         let counts =
             "{many(row.tondo.instructions)} | {many(row.go.instructions)} | {many(row.tondo.cycles)} | {many(row.go.cycles)}"
         lines.push(
-            "| {row.name} | {time(row.tondo.nanoseconds)} | {time(row.go.nanoseconds)} | {ratio.toFixed(2)}×{mark} | {row.tondo.allocations.toFixed(0)}{marked}{regions} | {row.go.allocations.toFixed(0)} | {sized(row.tondo.bytes)}{regionBytes} | {sized(row.go.bytes)} | {counts} |",
+            "| {row.name} | {time(row.tondo.nanoseconds)} | {time(row.go.nanoseconds)}{range} | {ratio.toFixed(2)}×{mark} | {row.tondo.allocations.toFixed(0)}{marked}{regions} | {row.go.allocations.toFixed(0)} | {sized(row.tondo.bytes)}{regionBytes} | {sized(row.go.bytes)} | {counts} |",
         )
     }
     lines.push("")
     lines.push(
         "{slower} of {rows.length()} benchmarks are slower than Go; {heavier} allocate more; {more} run more instructions than Go.",
+    )
+    lines.push("")
+    lines.push(
+        "Go's time is the median of its {GoRuns} runs of each row; {spreading} rows whose runs spread past a tenth give their range beside it.",
     )
     if not busy.isEmpty() {
         lines.push("")
