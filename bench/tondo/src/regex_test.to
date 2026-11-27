@@ -1,6 +1,16 @@
 import std.regex
 import std.testing
 
+/// The addresses the pattern finds in the text, and their bytes in all.
+fn addresses(pattern: regex.Regex, text: String): (Int, Int) ! regex.RegexError {
+    var (count, length) = (0, 0)
+    for found in pattern.findAll(text)? {
+        count += 1
+        length += found?.text.byteLength()
+    }
+    (count, length)
+}
+
 test regex {
     let pattern = regex.Regex.compile("^[a-z]+\\.[a-z]+@[a-z]+\\.com$")?
     var lines: Array[String] = []
@@ -23,4 +33,11 @@ test regex {
         )? ==
             500,
     )
+    // A mebibyte of text in other scripts with an address every hundredth
+    // line: the search for the pattern's literal, and the matches made.
+    let others = "{Other.trimEnd()}\n".repeat(99)
+    let text = "{others}write to ada.lovelace@example.com today\n".repeat(150)
+    let finder = regex.Regex.compile("[a-z]+\\.[a-z]+@[a-z]+\\.com")?
+    let (found, length) = testing.bench("findAll 1MiB", () => addresses(finder, text))?
+    assert(found == 150 and length == 3600 and text.byteLength() == 1_030_650)
 }

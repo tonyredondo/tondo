@@ -644,6 +644,25 @@ func BenchmarkRegex(b *testing.B) {
 			sinkInt = found
 		}
 	})
+	// A mebibyte of text in other scripts with an address every hundredth
+	// line: the search for the pattern's literal, and the matches made.
+	others := strings.Repeat(strings.TrimSpace(otherWords)+"\n", 99)
+	text := strings.Repeat(others+"write to ada.lovelace@example.com today\n", 150)
+	finder := regexp.MustCompile(`[a-z]+\.[a-z]+@[a-z]+\.com`)
+	b.Run("findAll 1MiB", func(b *testing.B) {
+		var found [][]int
+		for b.Loop() {
+			found = finder.FindAllStringIndex(text, -1)
+			sinkAny = found
+		}
+		length := 0
+		for _, span := range found {
+			length += span[1] - span[0]
+		}
+		if len(found) != 150 || length != 3600 || len(text) != 1_030_650 {
+			b.Fatalf("findAll 1MiB found %d addresses of %d bytes", len(found), length)
+		}
+	})
 }
 
 func spawned(count int) int {
