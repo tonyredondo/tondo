@@ -7,7 +7,7 @@ use super::io::{Mode, StreamObject, StreamState, run, run_ready};
 use super::{ArrayHeader, Str, str_bytes, str_new};
 use crate::array_items;
 use crate::byte_array;
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn host<R: Send + 'static>(job: impl FnOnce() -> R + Send) -> R {
@@ -160,6 +160,92 @@ fn write_atomically(path: &str, data: &[u8]) -> Outcome<()> {
     io(written)
 }
 
+/// From this size a file is read straight into its text, where the caller
+/// wants it, which saves a copy and its bytes for a second call of the
+/// host; a smaller one is read and copied in one.
+const READ_INTO_TEXT_FROM: usize = 64 * 1024;
+
+/// A file opened to be read as text: whole, when it is small, or open with
+/// the size it said.
+enum Opened {
+    Whole(String),
+    Large(std::fs::File, usize),
+}
+
+fn opened(path: String) -> Outcome<Opened> {
+    let mut file = io(std::fs::File::open(path))?;
+    let size = file.metadata().map_or(0, |m| m.len() as usize);
+    if size >= READ_INTO_TEXT_FROM {
+        return Ok(Opened::Large(file, size));
+    }
+    let mut bytes = Vec::with_capacity(size + 1);
+    io(file.read_to_end(&mut bytes))?;
+    Ok(Opened::Whole(text(bytes)?))
+}
+
+/// A large file read straight into a text built in `region`, or on the
+/// heap without one, and checked as UTF-8 where it lies. A file that grew
+/// past the size it said has the rest added after it, and one that shrank
+/// to a few bytes is a short text as any other.
+fn read_large(file: std::fs::File, size: usize, region: *mut crate::regions::Region) -> Outcome<*mut Str> {
+    let mut started = std::mem::MaybeUninit::<crate::Builder>::uninit();
+    unsafe {
+        match region.is_null() {
+            true => {
+                started.write(crate::Builder::new(size + 1));
+            }
+            false => super::builder::tondo_rt_sb_start_region(started.as_mut_ptr(), size + 1, region),
+        }
+    }
+    let mut builder = unsafe { started.assume_init() };
+    let (at, _, room) = builder.parts();
+    let into = at as usize;
+    // The task waits for the host's work to end, so its room stays.
+    let read = host(move || {
+        let (mut file, mut filled) = (file, 0);
+        let room = unsafe { std::slice::from_raw_parts_mut(into as *mut u8, room) };
+        while filled < room.len() {
+            match file.read(&mut room[filled..]) {
+                Ok(0) => return Ok((filled, Vec::new())),
+                Ok(n) => filled += n,
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return io(Err(e)),
+            }
+        }
+        let mut rest = Vec::new();
+        io(file.read_to_end(&mut rest))?;
+        Ok((filled, rest))
+    });
+    // What goes unused is the heap's to free; a region frees its own.
+    let discard = |builder: crate::Builder| {
+        let text = builder.finish();
+        if region.is_null() {
+            unsafe { crate::strings::tondo_rt_str_release(text) };
+        }
+    };
+    let (filled, rest) = match read {
+        Ok(read) => read,
+        Err(error) => {
+            discard(builder);
+            return Err(error);
+        }
+    };
+    builder.set_len(filled);
+    builder.extend(&rest);
+    let (at, len, _) = builder.parts();
+    let bytes = unsafe { std::slice::from_raw_parts(at, len) };
+    if simdutf8::basic::from_utf8(bytes).is_err() {
+        discard(builder);
+        return Err(FsError::InvalidData);
+    }
+    if len <= crate::strings::SHORT_MAX {
+        let short = crate::strings::str_in(region, bytes);
+        discard(builder);
+        return Ok(short);
+    }
+    Ok(builder.finish())
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_read_text(
     path_text: *const Str,
@@ -167,8 +253,12 @@ pub unsafe extern "C" fn tondo_rt_fs_read_text(
     region: *mut crate::regions::Region,
 ) -> i64 {
     let path = unsafe { path(path_text) };
-    let read = host(move || text(io(std::fs::read(path?))?));
-    finish(read, |text| unsafe { *out = crate::strings::str_in(region, text.as_bytes()) })
+    let read = match host(move || opened(path?)) {
+        Ok(Opened::Whole(text)) => Ok(crate::strings::str_in(region, text.as_bytes())),
+        Ok(Opened::Large(file, size)) => read_large(file, size, region),
+        Err(error) => Err(error),
+    };
+    finish(read, |text| unsafe { *out = text })
 }
 
 #[unsafe(no_mangle)]

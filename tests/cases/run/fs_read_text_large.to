@@ -1,0 +1,40 @@
+// fs.readText reads a file of 64 KiB or more straight into its text, where
+// the caller keeps it or apart: what it gives is the file, around that
+// bound and in characters of one to four bytes; one that is not UTF-8 is
+// InvalidData; and an empty file is the empty text.
+import std.console
+import std.fs
+
+fn read(file: String): String {
+    fs.readText(file) ?? "unreadable"
+}
+
+fn main(): !fs.FsError {
+    let directory = fs.createTemporaryDirectory(pattern: "read-text-*")?
+    defer {
+        _ = fs.remove(directory, recursive: true)
+    }
+    let file = "{directory}/text.txt"
+    for size in [0, 7, 65_535, 65_536, 65_537, 300_003] {
+        let text = "{"añ€𝄞".repeat(size / 10)}{"x".repeat(size % 10)}"
+        fs.writeText(file, text)?
+        let here = fs.readText(file)?
+        let apart = spawn read(file)
+        console.println("{size}: {here.byteLength()} {here == text} {apart.wait() == text}")
+    }
+    var bytes = "x".repeat(100_000).bytes()
+    bytes[50_000] = Byte(0xFFu8)
+    fs.writeBytes(file, bytes)?
+    match fs.readText(file) {
+        ok(_) => console.println("read what is not UTF-8")
+        err(error) => console.println("not UTF-8: {error}")
+    }
+}
+
+// expect-stdout: 0: 0 true true
+// expect-stdout: 7: 7 true true
+// expect-stdout: 65535: 65535 true true
+// expect-stdout: 65536: 65536 true true
+// expect-stdout: 65537: 65537 true true
+// expect-stdout: 300003: 300003 true true
+// expect-stdout: not UTF-8: invalid data
