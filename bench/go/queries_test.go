@@ -2,6 +2,7 @@ package bench
 
 import (
 	"cmp"
+	"hash/fnv"
 	"slices"
 	"strconv"
 	"strings"
@@ -336,4 +337,53 @@ func BenchmarkTexts(b *testing.B) {
 			b.Fatalf("fromBytes other gave %d bytes, %d characters", len(sinkString), counted(sinkString))
 		}
 	})
+	// A mebibyte split into its lines, searched, replaced in and changed of
+	// case: the small rows' work at a size past the caches.
+	lines := strings.Repeat(strings.TrimSpace(asciiWords)+"\n", 23_831)
+	b.Run("split lines 1MiB", func(b *testing.B) {
+		var pieces []string
+		for b.Loop() {
+			pieces = strings.Split(lines, "\n")
+			sinkInt = len(pieces)
+		}
+		size := 0
+		for _, piece := range pieces {
+			size += len(piece)
+		}
+		if len(pieces) != 23_832 || size != 1_024_733 || pieces[23_831] != "" {
+			b.Fatalf("split lines 1MiB gave %d pieces of %d bytes", len(pieces), size)
+		}
+	})
+	b.Run("replace other 1MiB", func(b *testing.B) {
+		for b.Loop() {
+			sinkString = strings.ReplaceAll(longOther, "más", "menos")
+		}
+		if len(sinkString) != 1_062_675 || fnv64a(sinkString) != 2235696670756215482 {
+			b.Fatalf("replace other 1MiB gave %d bytes", len(sinkString))
+		}
+	})
+	b.Run("contains 1MiB", func(b *testing.B) {
+		for b.Loop() {
+			sinkBool = strings.Contains(longOther, "文章 x")
+		}
+		if sinkBool {
+			b.Fatalf("contains 1MiB found what is not there")
+		}
+	})
+	b.Run("toUpper other 1MiB", func(b *testing.B) {
+		for b.Loop() {
+			sinkString = strings.ToUpper(longOther)
+		}
+		if len(sinkString) != 1_048_506 || fnv64a(sinkString) != 18009355550675320886 {
+			b.Fatalf("toUpper other 1MiB gave %d bytes", len(sinkString))
+		}
+	})
+}
+
+// fnv64a gives the FNV-1a hash of the text's bytes, as Tondo's
+// hash.fnv64a, to check a row's answer.
+func fnv64a(text string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(text))
+	return h.Sum64()
 }

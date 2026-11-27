@@ -76,4 +76,17 @@ test texts {
     let fromOther = testing.bench("fromBytes other", () => String.fromBytes(otherBytes))?
     assert(fromOther.byteLength() == 1_048_506 and counted(fromOther) == 651_774)
     assert(fromOther == longOther)
+    // A mebibyte split into its lines, searched, replaced in and changed
+    // of case: the small rows' work at a size past the caches.
+    let lines = "{Ascii.trimEnd()}\n".repeat(23_831)
+    let pieces = testing.bench("split lines 1MiB", () => lines.split("\n"))
+    assert(pieces.length() == 23_832 and pieces.map(piece => piece.byteLength()).sum() == 1_024_733)
+    assert(pieces[0] == Ascii.trimEnd() and pieces[23_831] == "")
+    let replacedLong = testing.bench("replace other 1MiB", () => longOther.replace("más", "menos"))
+    assert(replacedLong.byteLength() == 1_062_675 and not replacedLong.contains("más"))
+    assert(hash.fnv64a(replacedLong.bytes()) == 2235696670756215482)
+    assert(not testing.bench("contains 1MiB", () => longOther.contains("文章 x")))
+    let upperLong = testing.bench("toUpper other 1MiB", () => longOther.toUpper())
+    assert(upperLong.byteLength() == 1_048_506 and upperLong.startsWith("EL ÑANDÚ COMIÓ MÁS"))
+    assert(hash.fnv64a(upperLong.bytes()) == 18009355550675320886)
 }
