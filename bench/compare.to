@@ -15,7 +15,7 @@
 // `dotnet` runs, a third holds the rows that bench/csharp has too, against
 // C#.
 //
-//   tondo run bench/compare.to [--time <seconds>] [--output <file>] [--cpu <level>]
+//   tondo run bench/compare.to [--time <seconds>] [--output <file>] [--cpu <level>] [--variables <n>]
 //
 // `--cpu` builds both sides for a level of processor, as `tondo --cpu` and
 // Go's `GOAMD64` name it: `x86-64-v3` is Go's `v3`; without it each side
@@ -30,12 +30,20 @@
 //   tondo run bench/compare.to -- --old <tondo> [--rounds 4] [--max 5]
 //
 // It runs from the repository's root; `TONDO` names the `tondo` to measure
-// with, `tondo` on PATH by default.
+// with, `tondo` on PATH by default. Both sides run in an environment of
+// `--variables` variables, 55 by default, whatever started it: `HOME` as it
+// was given it; `PATH`, the directory of the `go` it finds, then `/usr/bin`
+// and `/bin`, then those of `dotnet` and `perf` where they lie elsewhere;
+// `TONDO`, the path of the `tondo` it measures; and `TABLE_01` on, each of
+// thirty bytes. The rows that start a program move with their number, as Go
+// copies them at each start and Tondo gives a child its program's copy once
+// the program has changed its environment, so the table names them.
 
 import std.console
 import std.env
 import std.fs
 import std.json
+import std.path
 import std.process
 
 type Measure = {
@@ -434,6 +442,52 @@ fn tondoAgain(name: String, tondo: String, seconds: String, cpu: String): Measur
     tondoSide(tondo, seconds, cpu, ["--filter", group]).ok()?.get(name)
 }
 
+/// The environment a table is measured in: `HOME` as compare.to was given
+/// it, the table's own `PATH`, `TONDO`, and as many more of thirty bytes,
+/// `TABLE_01` on, as make `count` variables.
+fn tableEnvironment(count: Int, tondo: String): Map[String, String] {
+    var table: Map[String, String] = [
+        "HOME": env.get("HOME") ?? "",
+        "PATH": tablePath(),
+        "TONDO": process.which(tondo) ?? tondo,
+    ]
+    let width = "{count - 3}".byteLength()
+    for n in 1..=(count - 3) {
+        table["TABLE_{"{n}".padStart(width, "0")}"] = "abcdefghijklmnopqrstuvwxyz0123"
+    }
+    table
+}
+
+/// The directories of the table's `PATH`: that of the `go` compare.to finds,
+/// which the table runs, then `/usr/bin` and `/bin`, then those of `dotnet`
+/// and `perf` where they lie elsewhere. The rows that look a program up on
+/// `PATH` try the same directories whoever starts the table.
+fn tablePath(): String {
+    let directory = (program: String): String? { path.parent(process.which(program)?) }
+    var directories: Array[String] = []
+    for found in [directory("go"), "/usr/bin", "/bin", directory("dotnet"), directory("perf")] {
+        match found {
+            some(place) if not directories.contains(place) => directories.push(place)
+            _ => {}
+        }
+    }
+    directories.join(":")
+}
+
+/// Whether the program runs in that environment, and nothing else.
+fn runsIn(table: Map[String, String]): Bool {
+    let own = env.vars()
+    if own.length() != table.length() {
+        return false
+    }
+    for (name, value) in table {
+        if own.get(name) != value {
+            return false
+        }
+    }
+    true
+}
+
 fn median(values: Array[Float]): Float {
     var sorted = values
     sorted.sortBy(value => value)
@@ -527,6 +581,7 @@ fn main(): !String {
     var cpu = ""
     var rounds = 4
     var max = 5.0
+    var variables = 55
     let arguments = env.args()
     for i in 0..arguments.length() {
         let value = if i + 1 < arguments.length() { arguments[i + 1] } else { "" }
@@ -537,10 +592,30 @@ fn main(): !String {
             "--cpu" => cpu = value
             "--rounds" => rounds = Int.parse(value) ?? 4
             "--max" => max = Float.parse(value) ?? 5.0
+            "--variables" => variables = Int.parse(value) ?? 55
             _ => {}
         }
     }
     let tondo = env.get("TONDO") ?? "tondo"
+    if variables < 3 {
+        fail "--variables takes 3 or more: HOME, PATH and TONDO, and the table's"
+    }
+    // Both sides inherit the table's environment: the program starts
+    // itself again in it, once.
+    let environment = tableEnvironment(variables, tondo)
+    if not runsIn(environment) {
+        if env.vars().keys().any(name => name.startsWith("TABLE_")) {
+            fail "compare.to was started in another table's environment: start it as it is, with --variables {variables} for this one"
+        }
+        var again = process.command(env.executable(), ...env.args()).clearEnv()
+        for (name, value) in environment {
+            again = again.env(name, value)
+        }
+        again.exec().mapErr(e => "cannot start again in the table's environment: {e}")?
+    }
+    console.eprintln(
+        "environment: {variables} variables for both sides, PATH {env.get("PATH") ?? ""}, TONDO {env.get("TONDO") ?? ""} and TABLE_* of thirty bytes",
+    )
     if old != "" {
         againstOld(old, tondo, seconds, cpu, rounds, max, output)?
         return

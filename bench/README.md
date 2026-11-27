@@ -14,6 +14,19 @@ It says first which `go` it runs, and refuses one that cannot build
 `go/`, as a system's `go` ahead of the one its `GOROOT` holds on `PATH`,
 saying how to put the right one first.
 
+Both sides run in an environment that compare.to sets itself, whatever
+started it, and says in its first line: 55 variables, or as many as
+`--variables` names. `HOME` as it was given it; `PATH`, the directory of
+the `go` it finds, then `/usr/bin` and `/bin`, then those of `dotnet` and
+`perf` where they lie elsewhere; `TONDO`, the `tondo` it measures; and
+`TABLE_01` on, each `abcdefghijklmnopqrstuvwxyz0123`. The rows that start
+a program move with their number and with the directories of `PATH`: Go
+copies the environment at each start, and Tondo gives a child its
+program's copy once the program has changed its environment. Go runs each
+row five times, as its time moves more than Tondo's from one run to the
+next where a row allocates much: the table gives their median, and the
+fastest and the slowest beside a row whose runs spread past a tenth.
+
 Each side measures a run as the median of its samples; Go's `-benchmem`
 and Tondo's `--bench` count allocations the same way, each in its own
 allocator. The goal is every row at or under 1.0×.
