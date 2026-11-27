@@ -1,0 +1,10 @@
+import std.hash
+import std.testing
+
+/// A mebibyte hashed with SHA-256: whether each side takes the processor's
+/// instructions for it.
+test hash {
+    let data = megabyte(true).bytes()
+    let digest = testing.bench("sha256 1MiB", () => hash.sha256(data))
+    assert(digest.hex() == "0ea51d8089aad80e26dcd0889b7db4cee183e7b84bad16e5dc91ce3e584d3efc")
+}
