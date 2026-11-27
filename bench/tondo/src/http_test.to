@@ -21,7 +21,13 @@ fn app(): http.App {
     var routes = http.App()
     routes.get("/hello", () => "hello")
     routes.post("/json", (input: Payload) { input with { count: input.count + 1 } })
+    routes.post("/echo", request => http.Reply.bytes(request.bytes()?))
     routes
+}
+
+/// A body posted, which the server reads whole and sends back.
+fn echoed(client: http.Client, payload: Array[Byte]): Array[Byte] ! http.HttpError {
+    client.post("/echo", body: http.Body.bytes(payload))?.bytes()
 }
 
 /// `count` requests for a short text, one after another.
@@ -71,6 +77,10 @@ test http {
     assert(testing.bench("hello 64x100", () => together(64, 100, client, hellos))? == 32_000)
     // bench/go gives the same.
     assert(testing.bench("json 64x100", () => together(64, 100, client, posts))? == 323_200)
+    // A mebibyte through the server and back: both bodies' paths, read and
+    // written, on both ends.
+    let payload = megabyte(true).bytes()
+    assert(testing.bench("echo 1MiB", () => echoed(client, payload))? == payload)
     plain.stop()
     let secure = app().start(tls: net.Tls.pem(Certificate, Key))?
     let trusting = http.Client(baseUrl: secure.url(), trust: Authority)
@@ -101,6 +111,45 @@ fn serve(listener: net.Listener) {
     }
 }
 
+/// Reads `size` bytes of a connection, sends them back, and again, until it
+/// closes.
+fn bounce(connection: net.Stream, size: Int) {
+    for {
+        var held: Array[Byte] = []
+        for held.length() < size {
+            match connection.read() {
+                ok(some(bytes)) => held.extend(bytes)
+                _ => return
+            }
+        }
+        if connection.writeBytes(held).isErr() {
+            return
+        }
+    }
+}
+
+fn bounceAll(listener: net.Listener, size: Int) {
+    for {
+        match listener.accept() {
+            ok(connection) => spawn detached bounce(connection, size)
+            err(_) => return
+        }
+    }
+}
+
+/// The payload sent whole and read back whole.
+fn bounced(stream: net.Stream, payload: Array[Byte]): Array[Byte] ! net.NetError {
+    stream.writeBytes(payload)?
+    var back: Array[Byte] = []
+    for back.length() < payload.length() {
+        match stream.read()? {
+            some(bytes) => back.extend(bytes)
+            none => break
+        }
+    }
+    back
+}
+
 /// `count` lines sent and read back, one after another.
 fn roundTrips(stream: net.Stream, count: Int): Int ! net.NetError {
     var total = 0
@@ -119,6 +168,14 @@ test net {
     assert(testing.bench("echo 1x1000", () => roundTrips(stream, 1000))? == 7890)
     stream.close()?
     server.cancel()
+    // A mebibyte written to a server that reads it whole and sends it back.
+    let payload = megabyte(true).bytes()
+    let bulkListener = net.listen("127.0.0.1", 0)?
+    let bulkServer = spawn bounceAll(bulkListener, payload.length())
+    let bulk = net.connect("127.0.0.1", bulkListener.address().port)?
+    assert(testing.bench("echo 1MiB", () => bounced(bulk, payload))? == payload)
+    bulk.close()?
+    bulkServer.cancel()
     let secureListener = net.listen("127.0.0.1", 0, tls: net.Tls.pem(Certificate, Key))?
     let secureServer = spawn serve(secureListener)
     let secure = net.connectTls("127.0.0.1", secureListener.address().port, trust: Authority)?

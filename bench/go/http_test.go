@@ -42,7 +42,27 @@ func routes() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(p)
 	})
+	mux.HandleFunc("POST /echo", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Write(body)
+	})
 	return mux
+}
+
+// echoed posts the payload, which the server reads whole and sends back.
+func echoed(client *http.Client, url string, payload []byte) []byte {
+	response, err := client.Post(url+"/echo", "application/octet-stream", bytes.NewReader(payload))
+	if err != nil {
+		panic(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	return body
 }
 
 // The certificate of 127.0.0.1 and the authority that signed it.
@@ -123,6 +143,19 @@ func BenchmarkHttp(b *testing.B) {
 			sinkInt = together(64, 100, func(n int) int { return posts(client, plain.URL, n) })
 		}
 	})
+	// A mebibyte through the server and back: both bodies' paths, read and
+	// written, on both ends.
+	payload := []byte(megabyte(true))
+	b.Run("echo 1MiB", func(b *testing.B) {
+		var back []byte
+		for b.Loop() {
+			back = echoed(client, plain.URL, payload)
+			sinkAny = back
+		}
+		if !bytes.Equal(back, payload) {
+			b.Fatalf("echo 1MiB gave back %d bytes", len(back))
+		}
+	})
 	certificate, authority := certificates(b)
 	secure := httptest.NewUnstartedServer(routes())
 	secure.EnableHTTP2 = true
@@ -164,6 +197,29 @@ func echoing(listener net.Listener) {
 	}
 }
 
+// bouncing serves each connection by reading size bytes of it, sending them
+// back, and again, until it closes.
+func bouncing(listener net.Listener, size int) {
+	for {
+		connection, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		go func() {
+			defer connection.Close()
+			held := make([]byte, size)
+			for {
+				if _, err := io.ReadFull(connection, held); err != nil {
+					return
+				}
+				if _, err := connection.Write(held); err != nil {
+					return
+				}
+			}
+		}()
+	}
+}
+
 func roundTrips(connection net.Conn, lines *bufio.Reader, count int) int {
 	total := 0
 	for i := 0; i < count; i++ {
@@ -193,6 +249,34 @@ func BenchmarkNet(b *testing.B) {
 	b.Run("echo 1x1000", func(b *testing.B) {
 		for b.Loop() {
 			sinkInt = roundTrips(connection, lines, 1000)
+		}
+	})
+	// A mebibyte written to a server that reads it whole and sends it back;
+	// what comes back is read into a buffer made once.
+	payload := []byte(megabyte(true))
+	bulkListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer bulkListener.Close()
+	go bouncing(bulkListener, len(payload))
+	bulk, err := net.Dial("tcp", bulkListener.Addr().String())
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer bulk.Close()
+	b.Run("echo 1MiB", func(b *testing.B) {
+		back := make([]byte, len(payload))
+		for b.Loop() {
+			if _, err := bulk.Write(payload); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := io.ReadFull(bulk, back); err != nil {
+				b.Fatal(err)
+			}
+		}
+		if !bytes.Equal(back, payload) {
+			b.Fatalf("echo 1MiB gave back other bytes")
 		}
 	})
 	certificate, authority := certificates(b)
