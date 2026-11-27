@@ -10540,7 +10540,11 @@ needed and the three rows that read a mebibyte of text whole. Each was
 measured by `tondo test --bench --series` over bench/tondo and the eleven
 examples, in the table's 55 variables, each commit with its own tondo; the
 whole, head a9dd4a58 (sha256 ca13170b…) against main (sha256 28c2b8e7…),
-in four orders of the functions each. Each commit, by what the series
+in four orders of the functions each. The tondo of the push's head, after
+a comment of `series.rs` changed its words and not its lines, is sha256
+4780fc8b…: of its sections only the build id and the names of its
+symbols differ, which LLVM suffixes with a hash of each module and so of
+its source file; every section the program loads is the same bytes. Each commit, by what the series
 said it moved:
 
 - A URL's parts encoded and texts cut by their bytes: `1000 commands` of
