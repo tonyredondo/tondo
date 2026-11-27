@@ -10497,3 +10497,98 @@ places then take the bytes as text unchecked, so
 `simdutf8_answers_as_std_does` holds simdutf8 to Rust's validator both
 ways, at every place of a block of 64 bytes, across a block's end and the
 text's, among characters of one to four bytes.
+
+## A child gets the system's environment while it is the program's copy
+
+A start of a program copied the whole environment twice, the program's
+copy into a list and that list into std's: about seven allocations and
+three thousand instructions a variable. A child now inherits the system's
+environment as it is, with nothing copied, while that is the program's
+copy byte for byte, entry by entry and in order. The copy keeps the
+system's entries as they were when it was read from them, and again after
+`syncNative`, and a start compares them. Once the program changes its copy,
+or the system's differs from it in any byte, as C code may make it, the
+child is given the copy, made once and again only after a change, until
+`syncNative` makes them equal again (standard library 14.3.5). Bytes and
+not pointers: musl's `setenv` may put a new value where the old one was,
+the BSDs' may write it over the old, and C code may write over a string it
+gave `putenv`. A system environment with an entry without `=`, or a name
+twice, which the copy cannot hold, is never taken for the copy. The child's
+environment and the `PATH` its program is looked up on come from one hold
+of the copy, so that a start beside a change takes all of one or all of
+the other.
+
+The two rows that start a program, against main and against Go, in the
+table's 55 variables and in 200, as a session's shell has:
+
+| Row | Variables | Allocations, main → now (Go) | Instructions, main → now | Time against main | Tondo/Go |
+|---|---:|---:|---:|---:|---:|
+| processes/true by name | 55 | 477 → 21 (47) | 173.5k → 14.3k | 5.6% less | 0.95× |
+| processes/true by path | 55 | 468 → 19 (34) | 170.0k → 13.0k | 3.5% less | 0.94× |
+| processes/true by name | 200 | 1,540 → 21 (47) | 647.1k → 22.9k | 14.2% less | 0.90× |
+| processes/true by path | 200 | 1,531 → 19 (34) | 643.0k → 21.7k | 13.4% less | 0.91× |
+
+A start now costs the same whatever the environment holds, and allocates
+less than Go's, which copies it; the rest of its time is the kernel's
+start of the child, which this does not touch.
+
+## Piece 2 of another session's speed work goes in by its parts
+
+The library's and the texts' part of pull request 51 goes to main as ten
+commits over 525879a0, after the two mends of `--series` it showed were
+needed and the three rows that read a mebibyte of text whole. Each was
+measured by `tondo test --bench --series` over bench/tondo and the eleven
+examples, in the table's 55 variables, each commit with its own tondo; the
+whole, head a9dd4a58 (sha256 ca13170b…) against main (sha256 28c2b8e7…),
+in four orders of the functions each. Each commit, by what the series
+said it moved:
+
+- A URL's parts encoded and texts cut by their bytes: `1000 commands` of
+  kvstore 23.8% fewer instructions, `links of a page` of linkcheck 37.2%,
+  notes' search 6.5% and 3,621 allocations a run to 3,221, sitegen 3.2%
+  and 7,784 to 7,630, logstat 3.1%.
+- A text's reader where the text is, and a line's end by memchr:
+  `programs/sum lines` 27.7% fewer instructions and 5 allocations to 1;
+  `net/echo` 2.1% more and `net/tls echo` 1.2%, which the commit of the
+  case a block at a time gives back, a short read looking for a line's end
+  byte by byte.
+- Texts searched by memchr and their case changed where they are made:
+  `replace other` 37.1% fewer instructions, `replace ascii` 16.3%,
+  `toUpper other` 1 allocation to none and 8.4% more instructions, which
+  the next but one takes back; kvstore 4.6%, todo-api 3.8%, linkcheck and
+  logstat 2.9%.
+- The child's environment, as the entry above says.
+- The case of a text outside ASCII a block at a time: `toUpper other`
+  147.9k instructions to 66.5k.
+- EPERM taken as EACCES on `PATH`: nothing moved.
+- A short line's end eight bytes at a time: `sum lines` 375.4k
+  instructions to 299.7k.
+- Fewer arrays and locks in protobuf, regex and sql: todo-api 9,221
+  allocations a run to 8,916 and 6.2% fewer bytes, linkcheck's regex
+  1,689 to 1,489, profiler 2.8% fewer instructions. Its fromWide, its
+  query's text and SQLite's parameters were left out, as they made more
+  allocations than main.
+- UTF-8 checked by simdutf8, as its entry says.
+
+The whole: of the 93 rows, every test passing with every revision, 13 are
+faster and none slower: `fromBytes other` 87.5% faster, `files/readText`
+77.9%, `toUpper other` 52.2%, `sum lines` 35.5%, linkcheck 34.0%, `replace
+other` 30.4%, `fromBytes ascii` 26.8%, kvstore 21.5%, notes 9.3%, sitegen
+5.9%, the two rows that start a program 5.6% and 3.5%, profiler 3.0%.
+Allocations only fall. Two rows run more instructions, `toUpper ascii`
+0.8% and `http/json` 0.4%. The tests' executables are 0.06% smaller in
+all, each within 0.2%; bench/compile's 25 rows are within 5% of main's,
+and its guard holds, a build growing 7.9 times in instructions for 7.7
+times the lines.
+
+Against Go, in the same environment, 70 of 80 rows are at or under Go's
+time, where piece 1's table had 65 of 77: `toUpper other` from 1.05× to
+0.51×, `sum lines` from 1.61× to 1.04×, and the three new rows at 0.40×,
+0.77× and 0.66×. Two rows went
+over, `loops/collatz` at 1.04× and `queries/iter filter sumBy` at 1.01×,
+which the piece does not touch and the whole finds the same in four
+orders, collatz from 750 to 884 µs among them: in this build their code
+lies where it runs slower. Go's own times
+moved by a median of 2.5% from piece 1's table, a dozen rows by more than
+a tenth with the same instructions, as one run a row of Go gives;
+docs/pending.md has the five runs that will steady it.
