@@ -285,25 +285,26 @@ example that compiles for each of its types.
 Tondo compiles to native code with Cranelift, of which it keeps its own copy
 for the optimizations it adds. The goal is every benchmark of
 [`bench/`](bench/README.md) at or under Go's time and allocations. Measured
-on 2026-11-26 at `b5530f8b`, on an AMD Ryzen 9 5950X against Go 1.27.4, each
+on 2026-11-26 at `a9dd4a58`, on an AMD Ryzen 9 5950X against Go 1.27.4, each
 for its default processor, Tondo's x86-64-v2 and Go's v1, in the environment
-of 55 variables that bench/README.md gives, 65 of the 77 are at or under
-Go's time, where 59 of 75 were at `25ff8924`, and 18 allocate more than Go
-in number or in bytes; across all the rows Tondo's time is 0.54 of Go's,
-where it was 0.57. The first piece of another session's work on speed,
-pull request 51, put five rows that were behind under Go: the lazy chains
-of queries, from 2.2× and 2.0× to 0.82× and 0.85×, with 42% and 30% fewer
-instructions; the characters of a text other than ASCII, from 1.6× to
-0.92×; `queries/countBy`, 1.2× to 0.92×; and `programs/count words`, 1.07×
-to 0.91×. Behind in time: `texts/trim` and `texts/trim read`, 2.6× and
-2.9×, as Go's trimmed text is a view of the old one and Tondo's a new one,
-in a region, even when it is only read; `programs/sum lines`, 1.6×, from
-2.3×, a text for each line where Go's scanner lends its buffer; the calls
-from threads of C, within 1.08×; and within 1.06×, `tasks/spawn`,
-`texts/toUpper other`, `net/tls echo`, `runtime/mutex` and `floats/sqrt`.
-`texts/chars ascii` and `floats/mandelbrot` are within 1% of Go's time,
-mandelbrot in as many cycles as Go and the ASCII characters only against
-Go's loop in a slow placement: against Go's time in the table before, 1.5×.
+of 55 variables that bench/README.md gives, 70 of the 80 are at or under
+Go's time, where 65 of 77 were at `b5530f8b`, and 17 allocate more than Go
+in number or in bytes; across all the rows Tondo's time is 0.53 of Go's,
+where it was 0.54. The second piece of another session's work on speed,
+pull request 51, the library's and the texts', took `texts/toUpper other`
+from 1.05× to 0.51× and `programs/sum lines` from 1.6× to 1.04×, and a
+start of a program from 477 allocations to 21 in those 55 variables, where
+Go makes 47; three new rows that read a mebibyte of text whole, which
+Tondo checks is UTF-8 with simdutf8, are at 0.40×, 0.77× and 0.66×. Behind
+in time: `texts/trim` and `texts/trim read`, 2.9×, as Go's trimmed text is
+a view of the old one and Tondo's a new one, in a region, even when it is
+only read; `texts/chars ascii`, 1.5× against Go's loop in its fast
+placement; and within 1.05×, `net/tls echo`, `programs/sum lines`, the
+calls from threads of C, `floats/sqrt`, and `loops/collatz` and
+`queries/iter filter sumBy`, whose code lies where it runs slower in this
+build and which the piece's measure finds the same in four orders of the
+functions. Go's side is one run of each row, whose time moves by a tenth
+or more where a row allocates much.
 What Tondo makes in regions, which Go would give its heap where a value
 leaves its function, is counted beside its heap's allocations.
 On 2026-10-26, with the 27 benchmarks there were then,
@@ -311,24 +312,26 @@ On 2026-10-26, with the 27 benchmarks there were then,
 
 | Benchmark | Tondo | Go | Tondo/Go |
 | --- | ---: | ---: | ---: |
-| arrays/sort 10000 | 63.88 µs | 363.84 µs | 0.18× |
-| regex/match 1000 | 35.78 µs | 147.76 µs | 0.24× |
-| maps/insert 10000 ints | 139.48 µs | 503.73 µs | 0.28× |
-| structs/users 1000 | 11.46 µs | 39.27 µs | 0.29× |
-| programs/build tree | 42.57 µs | 134.30 µs | 0.32× |
-| json/parse object | 1.65 µs | 3.62 µs | 0.46× |
-| programs/sort adults | 160.74 µs | 267.79 µs | 0.60× |
-| tasks/channel 10000 | 188.92 µs | 271.17 µs | 0.70× |
-| calls/fib 25 | 207.76 µs | 290.64 µs | 0.71× |
-| programs/reprice order | 1.18 µs | 1.63 µs | 0.73× |
-| loops/collatz 10000 | 750.90 µs | 913.17 µs | 0.82× |
-| loops/sum 1000000 | 610.32 µs | 735.40 µs | 0.83× |
-| runtime/select 1000 | 119.47 µs | 144.27 µs | 0.83× |
-| programs/count words | 10.17 µs | 11.19 µs | 0.91× |
-| floats/sqrt 100000 | 178.87 µs | 174.40 µs | 1.03× |
-| runtime/mutex 4x1000 | 21.91 µs | 20.97 µs | 1.04× |
-| tasks/spawn 1000 | 181.98 µs | 171.91 µs | 1.06× |
-| programs/sum lines | 24.28 µs | 15.13 µs | 1.61× |
+| arrays/sort 10000 | 64.22 µs | 363.29 µs | 0.18× |
+| regex/match 1000 | 36.35 µs | 158.53 µs | 0.23× |
+| maps/insert 10000 ints | 140.30 µs | 505.23 µs | 0.28× |
+| structs/users 1000 | 11.80 µs | 40.02 µs | 0.29× |
+| programs/build tree | 42.29 µs | 137.69 µs | 0.31× |
+| json/parse object | 1.64 µs | 3.74 µs | 0.44× |
+| programs/sort adults | 161.72 µs | 272.08 µs | 0.59× |
+| files/readText | 119.09 µs | 180.74 µs | 0.66× |
+| tasks/channel 10000 | 188.32 µs | 283.61 µs | 0.66× |
+| calls/fib 25 | 207.54 µs | 295.14 µs | 0.70× |
+| programs/reprice order | 1.21 µs | 1.67 µs | 0.72× |
+| texts/fromBytes other | 62.25 µs | 80.42 µs | 0.77× |
+| runtime/select 1000 | 121.89 µs | 150.88 µs | 0.81× |
+| loops/sum 1000000 | 623.89 µs | 744.65 µs | 0.84× |
+| programs/count words | 10.20 µs | 11.04 µs | 0.92× |
+| runtime/mutex 4x1000 | 20.43 µs | 21.60 µs | 0.95× |
+| tasks/spawn 1000 | 182.89 µs | 189.42 µs | 0.97× |
+| floats/sqrt 100000 | 187.34 µs | 180.95 µs | 1.04× |
+| loops/collatz 10000 | 902.40 µs | 866.60 µs | 1.04× |
+| programs/sum lines | 15.65 µs | 15.07 µs | 1.04× |
 
 [`bench/README.md`](bench/README.md) has every row with its allocations, and
 how to run them. The toolchain says where the time goes: `tondo optimizations`
@@ -337,7 +340,7 @@ lists what a release build inlined, kept off the heap and still checks,
 of each loop runs, `tondo size` what an executable is made of, `--timings`
 where a build's time goes, and
 `tondo test --bench --against main --max-regression 5` fails a change that
-makes a benchmark slower. `loops/collatz` moves from 0.87× to 1.07× with
+makes a benchmark slower. `loops/collatz` moves from 0.87× to 1.04× with
 where its code lies; `--cpu x86-64-v3` builds for AVX2, BMI2 and FMA, and
 [`bench/README.md`](bench/README.md) has the table with both sides at that
 level.
