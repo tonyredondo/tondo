@@ -1,0 +1,13 @@
+import std.encoding
+import std.hash
+import std.testing
+
+/// A mebibyte encoded in base64 and decoded again.
+test encoding {
+    let data = megabyte(true).bytes()
+    let encoded = testing.bench("base64 encode 1MiB", () => encoding.base64Encode(data))
+    assert(encoded.byteLength() == 1_398_008 and encoded.startsWith("ZWwgw7FhbmTDuiBj"))
+    assert(hash.fnv64a(encoded.bytes()) == 9913155958480842097)
+    let decoded = testing.bench("base64 decode 1MiB", () => encoding.base64Decode(encoded))?
+    assert(decoded == data)
+}

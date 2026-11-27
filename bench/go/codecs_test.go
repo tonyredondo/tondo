@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -78,6 +79,34 @@ func BenchmarkGzip(b *testing.B) {
 		}
 		if !bytes.Equal(unpacked, data) {
 			b.Fatalf("decompress 1MiB gave %d bytes", len(unpacked))
+		}
+	})
+}
+
+// A mebibyte encoded in base64 and decoded again.
+func BenchmarkEncoding(b *testing.B) {
+	data := []byte(megabyte(true))
+	b.Run("base64 encode 1MiB", func(b *testing.B) {
+		for b.Loop() {
+			sinkString = base64.StdEncoding.EncodeToString(data)
+		}
+		if len(sinkString) != 1_398_008 || fnv64a(sinkString) != 9913155958480842097 {
+			b.Fatalf("base64 encode 1MiB gave %d bytes", len(sinkString))
+		}
+	})
+	encoded := base64.StdEncoding.EncodeToString(data)
+	b.Run("base64 decode 1MiB", func(b *testing.B) {
+		var decoded []byte
+		for b.Loop() {
+			var err error
+			decoded, err = base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				b.Fatal(err)
+			}
+			sinkAny = decoded
+		}
+		if !bytes.Equal(decoded, data) {
+			b.Fatalf("base64 decode 1MiB gave %d bytes", len(decoded))
 		}
 	})
 }
